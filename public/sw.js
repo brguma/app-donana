@@ -19,16 +19,12 @@ const CACHE_STRATEGIES = {
 
 // Install Event - Cachear arquivos estáticos
 self.addEventListener('install', (event) => {
-  console.log('🔧 Service Worker: Install');
-  
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => {
-        console.log('📦 Cache aberto:', CACHE_NAME);
         return cache.addAll(STATIC_CACHE_URLS);
       })
       .then(() => {
-        console.log('✅ Arquivos estáticos cacheados');
         return self.skipWaiting();
       })
   );
@@ -36,22 +32,18 @@ self.addEventListener('install', (event) => {
 
 // Activate Event - Limpar caches antigos
 self.addEventListener('activate', (event) => {
-  console.log('🚀 Service Worker: Activate');
-  
   event.waitUntil(
     caches.keys()
       .then((cacheNames) => {
         return Promise.all(
           cacheNames.map((cacheName) => {
             if (cacheName !== CACHE_NAME) {
-              console.log('🗑️ Removendo cache antigo:', cacheName);
               return caches.delete(cacheName);
             }
           })
         );
       })
       .then(() => {
-        console.log('✅ Service Worker ativado');
         return self.clients.claim();
       })
   );
@@ -93,7 +85,6 @@ async function handleRequest(request) {
     return await handleNetworkFirst(request);
     
   } catch (error) {
-    console.log('❌ Erro no fetch:', error);
     return await getOfflineFallback(request);
   }
 }
@@ -189,15 +180,12 @@ async function getOfflineFallback(request) {
 
 // Background Sync (para quando voltar online)
 self.addEventListener('sync', (event) => {
-  console.log('🔄 Background Sync:', event.tag);
-  
   if (event.tag === 'background-sync') {
     event.waitUntil(doBackgroundSync());
   }
 });
 
 async function doBackgroundSync() {
-  console.log('🔄 Executando sincronização em background');
   // Aqui você pode implementar lógica para sincronizar dados offline
 }
 
@@ -240,4 +228,3 @@ self.addEventListener('notificationclick', (event) => {
   }
 });
 
-console.log('✅ Service Worker carregado - Donana App v2.0.0');
