@@ -230,13 +230,17 @@ const App = () => {
 
   // Monitorar autenticação
   useEffect(() => {
+    console.log('👁️ Monitorando mudanças de autenticação...');
     const unsubscribe = onAuthStateChanged(auth, (user) => {
+      console.log('🔐 Status de autenticação mudou:', user ? `Logado: ${user.email}` : 'Deslogado');
       setUser(user);
       setLoading(false);
       
       if (user) {
+        console.log('👤 Usuário logado, carregando dados...');
         loadUserData(user.uid);
       } else {
+        console.log('👤 Usuário deslogado, limpando dados...');
         setOrcamentos([]);
         setPedidos([]);
         setFinalizados([]);
@@ -248,7 +252,10 @@ const App = () => {
 
   // Carregar dados do usuário do Firebase
   const loadUserData = async (userId) => {
+    console.log('🔄 loadUserData chamado com userId:', userId);
+    
     if (!userId) {
+      console.log('❌ userId não fornecido');
       return;
     }
 
@@ -256,13 +263,15 @@ const App = () => {
       setLoading(true);
 
       if (!db) {
+        console.log('❌ db não disponível');
         return;
       }
 
-      // Carregar orçamentos
+      console.log('📊 Carregando dados do Firebase...');
+
+      // Carregar TODOS os orçamentos (sem filtro por usuário)
       const orcamentosRef = collection(db, 'orcamentos');
-      const orcamentosQuery = query(orcamentosRef, where('userId', '==', userId));
-      const orcamentosSnapshot = await getDocs(orcamentosQuery);
+      const orcamentosSnapshot = await getDocs(orcamentosRef);
       
       const orcamentosData = orcamentosSnapshot.docs.map(doc => ({
         id: doc.id,
@@ -276,12 +285,12 @@ const App = () => {
         return dateB - dateA;
       });
       
+      console.log('✅ Orçamentos carregados:', orcamentosData.length);
       setOrcamentos(orcamentosData);
 
-      // Carregar pedidos
+      // Carregar TODOS os pedidos (sem filtro por usuário)
       const pedidosRef = collection(db, 'pedidos');
-      const pedidosQuery = query(pedidosRef, where('userId', '==', userId));
-      const pedidosSnapshot = await getDocs(pedidosQuery);
+      const pedidosSnapshot = await getDocs(pedidosRef);
       
       const pedidosData = pedidosSnapshot.docs.map(doc => ({
         id: doc.id,
@@ -290,12 +299,12 @@ const App = () => {
       }));
       
       pedidosData.sort((a, b) => new Date(a.dataEntrega || 0) - new Date(b.dataEntrega || 0));
+      console.log('✅ Pedidos carregados:', pedidosData.length);
       setPedidos(pedidosData);
 
-      // Carregar finalizados
+      // Carregar TODOS os finalizados (sem filtro por usuário)
       const finalizadosRef = collection(db, 'finalizados');
-      const finalizadosQuery = query(finalizadosRef, where('userId', '==', userId));
-      const finalizadosSnapshot = await getDocs(finalizadosQuery);
+      const finalizadosSnapshot = await getDocs(finalizadosRef);
       
       const finalizadosData = finalizadosSnapshot.docs.map(doc => ({
         id: doc.id,
@@ -309,6 +318,7 @@ const App = () => {
         return dateB - dateA;
       });
       
+      console.log('✅ Finalizados carregados:', finalizadosData.length);
       setFinalizados(finalizadosData);
 
       // Backup local
@@ -316,12 +326,13 @@ const App = () => {
         localStorage.setItem('donana-orcamentos-backup', JSON.stringify(orcamentosData));
         localStorage.setItem('donana-pedidos-backup', JSON.stringify(pedidosData));
         localStorage.setItem('donana-finalizados-backup', JSON.stringify(finalizadosData));
+        console.log('💾 Backup local salvo');
       } catch (e) {
         console.warn('Erro ao salvar backup:', e);
       }
 
     } catch (error) {
-      console.error('Erro ao carregar do Firebase:', error);
+      console.error('❌ Erro ao carregar do Firebase:', error);
     } finally {
       setLoading(false);
     }
@@ -383,15 +394,21 @@ const App = () => {
 
   // Funções de autenticação
   const handleAuth = async (email, password) => {
+    console.log('🔐 Tentando autenticação:', { email, authMode });
     setAuthLoading(true);
     try {
       if (authMode === 'login') {
+        console.log('🔑 Fazendo login...');
         await signInWithEmailAndPassword(auth, email, password);
+        console.log('✅ Login realizado com sucesso');
       } else {
+        console.log('📝 Criando nova conta...');
         await createUserWithEmailAndPassword(auth, email, password);
+        console.log('✅ Conta criada com sucesso');
       }
       setShowAuth(false);
     } catch (error) {
+      console.error('❌ Erro na autenticação:', error);
       alert('Erro na autenticação: ' + error.message);
     }
     setAuthLoading(false);
@@ -451,12 +468,25 @@ const App = () => {
 
   // Salvar orçamento (adaptado para offline)
   const saveOrcamento = async () => {
-    if (carrinho.length === 0) return;
+    console.log('🔍 Debug saveOrcamento:', { 
+      carrinhoLength: carrinho.length, 
+      user: user?.email, 
+      isOnline, 
+      db: !!db 
+    });
+    
+    if (carrinho.length === 0) {
+      console.log('❌ Carrinho vazio');
+      return;
+    }
+    
     if (!user) {
+      console.log('❌ Usuário não logado');
       alert('⚠️ Faça login para salvar orçamentos!');
       setShowAuth(true);
       return;
     }
+    
     const agora = new Date();
     const novoOrcamento = {
       cliente: nomeCliente.trim() || '',
@@ -475,14 +505,20 @@ const App = () => {
       userId: user.uid,
       createdAt: agora
     };
+    
+    console.log('📝 Tentando salvar orçamento:', novoOrcamento);
+    
     try {
       setAuthLoading(true);
       if (isOnline) {
-        await addDoc(collection(db, 'orcamentos'), novoOrcamento);
+        console.log('🌐 Salvando online...');
+        const docRef = await addDoc(collection(db, 'orcamentos'), novoOrcamento);
+        console.log('✅ Orçamento salvo no Firebase:', docRef.id);
         await loadUserData(user.uid);
         setCurrentScreen('home');
         alert('✅ Orçamento salvo com sucesso!');
       } else {
+        console.log('📱 Salvando offline...');
         addPendingAction({ type: 'orcamento', data: novoOrcamento });
         setSyncMessage('Orçamento salvo localmente. Será sincronizado quando estiver online.');
         setTimeout(() => setSyncMessage(''), 3000);
@@ -492,6 +528,7 @@ const App = () => {
       setNomeCliente('');
       setShowClienteInput(false);
     } catch (error) {
+      console.error('❌ Erro ao salvar orçamento:', error);
       alert('❌ Erro ao salvar orçamento: ' + error.message);
     } finally {
       setAuthLoading(false);
@@ -884,10 +921,13 @@ const App = () => {
           {/* Contador de dados */}
           <div className="bg-blue-100 border border-blue-400 text-blue-700 px-3 py-2 rounded mb-6 text-center text-sm">
             📊 {orcamentos.length} orçamentos • {pedidos.length} pedidos • {finalizados.length} finalizados
-            {user && (
+            {user ? (
               <div className="mt-2">
-                {/* Removido botão de recarregar */}
-                {/* Removido botão de limpar cache */}
+                👥 <strong>Dados compartilhados:</strong> Todos os usuários logados veem as mesmas informações
+              </div>
+            ) : (
+              <div className="mt-2">
+                🔒 <strong>Faça login</strong> para acessar dados compartilhados da equipe
               </div>
             )}
           </div>
