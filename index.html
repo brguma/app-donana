@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  
+  <!-- PWA Meta Tags -->
+  <meta name="theme-color" content="#ec4899" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Donana" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  
+  <!-- SEO Meta Tags -->
+  <meta name="description" content="App de gestão para confeitaria - Orçamentos, Pedidos e Controle Financeiro" />
+  <meta name="keywords" content="confeitaria, doces, orçamentos, pedidos, gestão" />
+  <meta name="author" content="Donana" />
+  
+  <!-- Open Graph -->
+  <meta property="og:title" content="App Donana" />
+  <meta property="og:description" content="Gestão completa para sua confeitaria" />
+  <meta property="og:type" content="website" />
+  
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="/icon-192.png" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
+  
+  <!-- Manifest -->
+  <link rel="manifest" href="/manifest.json" />
+  
+  <title>App Donana - Gestão de Confeitaria</title>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <!-- PWA Install Prompt -->
+  <div id="pwa-install-prompt" style="display: none; position: fixed; bottom: 20px; left: 20px; right: 20px; background: #ec4899; color: white; padding: 15px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 1000;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <div>
+        <strong>📱 Instalar App</strong>
+        <br>
+        <small>Acesse offline e tenha melhor experiência!</small>
+      </div>
+      <div>
+        <button id="pwa-install-btn" style="background: white; color: #ec4899; border: none; padding: 8px 16px; border-radius: 6px; font-weight: bold; margin-right: 10px;">Instalar</button>
+        <button id="pwa-dismiss-btn" style="background: transparent; color: white; border: 1px solid white; padding: 8px 12px; border-radius: 6px;">✕</button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Service Worker Registration -->
+  <script>
+    // Register Service Worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then((registration) => {
+            console.log('SW registered: ', registration);
+          })
+          .catch((registrationError) => {
+            console.log('SW registration failed: ', registrationError);
+          });
+      });
+    }
+
+    // PWA Install Prompt
+    let deferredPrompt;
+    
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      
+      // Show install prompt
+      const installPrompt = document.getElementById('pwa-install-prompt');
+      installPrompt.style.display = 'block';
+    });
+
+    // Install button click
+    document.addEventListener('DOMContentLoaded', () => {
+      const installBtn = document.getElementById('pwa-install-btn');
+      const dismissBtn = document.getElementById('pwa-dismiss-btn');
+      const installPrompt = document.getElementById('pwa-install-prompt');
+
+      installBtn?.addEventListener('click', async () => {
+        if (deferredPrompt) {
+          deferredPrompt.prompt();
+          const { outcome } = await deferredPrompt.userChoice;
+          deferredPrompt = null;
+          installPrompt.style.display = 'none';
+        }
+      });
+
+      dismissBtn?.addEventListener('click', () => {
+        installPrompt.style.display = 'none';
+      });
+    });
+  </script>
+  
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>
