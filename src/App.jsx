@@ -1463,6 +1463,11 @@ const App = () => {
       const dataEntrega = new Date(p.dataEntrega).toDateString();
       return dataEntrega === hoje;
     });
+    
+    // Calcular valores totais
+    const totalEntregasHoje = pedidosHoje.reduce((sum, pedido) => sum + pedido.total, 0);
+    const totalPedidosAtivos = pedidos.reduce((sum, pedido) => sum + pedido.total, 0);
+    const totalOrcamentos = orcamentos.reduce((sum, orcamento) => sum + orcamento.total, 0);
 
     const produtosMaisVendidos = {};
     finalizados.forEach(pedido => {
@@ -1489,18 +1494,22 @@ const App = () => {
             <div className="bg-green-100 p-4 rounded-lg text-center">
               <div className="text-2xl font-bold text-green-600">{formatCurrency(totalVendas)}</div>
               <div className="text-sm text-green-700">Total Vendido</div>
+              <div className="text-xs text-green-600">{finalizados.length} pedidos</div>
             </div>
             <div className="bg-blue-100 p-4 rounded-lg text-center">
-              <div className="text-2xl font-bold text-blue-600">{pedidosHoje.length}</div>
+              <div className="text-2xl font-bold text-blue-600">{formatCurrency(totalEntregasHoje)}</div>
               <div className="text-sm text-blue-700">Entregas Hoje</div>
+              <div className="text-xs text-blue-600">{pedidosHoje.length} pedidos</div>
             </div>
             <div className="bg-purple-100 p-4 rounded-lg text-center">
-              <div className="text-2xl font-bold text-purple-600">{pedidos.length}</div>
+              <div className="text-2xl font-bold text-purple-600">{formatCurrency(totalPedidosAtivos)}</div>
               <div className="text-sm text-purple-700">Pedidos Ativos</div>
+              <div className="text-xs text-purple-600">{pedidos.length} pedidos</div>
             </div>
             <div className="bg-orange-100 p-4 rounded-lg text-center">
-              <div className="text-2xl font-bold text-orange-600">{orcamentos.length}</div>
+              <div className="text-2xl font-bold text-orange-600">{formatCurrency(totalOrcamentos)}</div>
               <div className="text-sm text-orange-700">Orçamentos</div>
+              <div className="text-xs text-orange-600">{orcamentos.length} pendentes</div>
             </div>
           </div>
 
