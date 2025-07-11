@@ -899,32 +899,570 @@ const App = () => {
     );
   }
 
-  // Fallback para outras telas
-  return (
-    <div className="min-h-screen bg-pink-50 p-4">
-      <div className="max-w-md mx-auto">
-        <h2 className="text-2xl font-bold text-pink-800 mb-6">
-          Tela: {currentScreen}
-        </h2>
-        <p className="text-center text-gray-600 mb-8">
-          Esta funcionalidade está implementada no código original!
-        </p>
-        <button
-          onClick={() => setCurrentScreen('home')}
-          className="w-full bg-pink-500 hover:bg-pink-600 text-white font-bold py-3 px-4 rounded-md"
-        >
-          Voltar ao Início
-        </button>
-        
-        <button
-          onClick={() => setCurrentScreen('home')}
-          className="fixed bottom-4 left-4 bg-gray-500 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg"
-        >
-          <ChevronLeft size={24} />
-        </button>
+  // Tela Pendentes
+  if (currentScreen === 'pendentes') {
+    return (
+      <div className="min-h-screen bg-pink-50 p-4">
+        <div className="max-w-md mx-auto">
+          <h2 className="text-2xl font-bold text-pink-800 mb-6">Orçamentos Pendentes</h2>
+          {orcamentos.length === 0 ? (
+            <div className="text-center text-gray-500 mt-8">
+              Nenhum orçamento pendente<br />
+              <span className="text-sm">Crie um orçamento primeiro!</span>
+            </div>
+          ) : (
+            orcamentos.map((orcamento) => (
+              <div key={orcamento.id} className="bg-white p-4 rounded-lg shadow mb-4">
+                <div className="flex justify-between items-start mb-2">
+                  <div className="flex-1">
+                    {editingCliente === orcamento.id ? (
+                      <div className="mb-2">
+                        <input
+                          type="text"
+                          defaultValue={orcamento.cliente}
+                          onKeyPress={(e) => {
+                            if (e.key === 'Enter') saveClienteEdit(orcamento.id, e.target.value);
+                          }}
+                          onBlur={(e) => saveClienteEdit(orcamento.id, e.target.value)}
+                          className="w-full p-2 text-lg font-bold border border-gray-300 rounded-md"
+                          placeholder="Nome do cliente"
+                          autoFocus
+                        />
+                      </div>
+                    ) : (
+                      <div 
+                        className="font-bold text-lg cursor-pointer hover:bg-gray-100 p-1 rounded flex items-center gap-2"
+                        onClick={() => setEditingCliente(orcamento.id)}
+                      >
+                        {orcamento.cliente || (
+                          <span className="text-gray-400 italic">📝 Clique para adicionar nome</span>
+                        )}
+                        <Edit3 size={14} className="text-gray-400" />
+                      </div>
+                    )}
+                    <div className="text-sm text-gray-600">{formatDate(orcamento.data)}</div>
+                  </div>
+                  <div className="text-lg font-bold text-green-600">{formatCurrency(orcamento.total)}</div>
+                </div>
+                <div className="border-t pt-2 mt-2">
+                  {orcamento.itens.map((item, index) => (
+                    <div key={index} className="flex justify-between text-sm mb-1">
+                      <span>{item.produto.nome} x{item.quantidade}</span>
+                      <span>{formatCurrency(item.total)}</span>
+                    </div>
+                  ))}
+                </div>
+                {showDataEntrega === orcamento.id ? (
+                  <div className="mt-4 p-3 bg-gray-50 rounded">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Data de Entrega</label>
+                    <input
+                      type="date"
+                      value={dataEntrega}
+                      onChange={(e) => setDataEntrega(e.target.value)}
+                      className="w-full p-2 border border-gray-300 rounded-md mb-3"
+                    />
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Tema da Festa <span className="text-gray-400">(opcional)</span></label>
+                    <input
+                      type="text"
+                      value={temaFesta}
+                      onChange={(e) => setTemaFesta(e.target.value)}
+                      className="w-full p-2 border border-gray-300 rounded-md mb-3"
+                      placeholder="Ex: Frozen, Homem-Aranha..."
+                    />
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Valor do Sinal</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={valorSinal}
+                      onChange={(e) => setValorSinal(e.target.value)}
+                      className="w-full p-2 border border-gray-300 rounded-md mb-3"
+                      placeholder="0,00"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => confirmarOrcamento(orcamento)}
+                        className="flex-1 bg-green-500 hover:bg-green-600 text-white py-2 px-4 rounded-md"
+                      >Confirmar</button>
+                      <button
+                        onClick={() => setShowDataEntrega(false)}
+                        className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded-md"
+                      >Cancelar</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-2 mt-4">
+                    <button
+                      onClick={() => setShowDataEntrega(orcamento.id)}
+                      className="flex-1 bg-green-500 hover:bg-green-600 text-white py-2 px-4 rounded-md flex items-center justify-center gap-2"
+                    ><Check size={16} /> Confirmar</button>
+                    <button
+                      onClick={() => cancelarOrcamento(orcamento.id)}
+                      className="flex-1 bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded-md flex items-center justify-center gap-2"
+                    ><X size={16} /> Cancelar</button>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+          <button
+            onClick={() => setCurrentScreen('home')}
+            className="fixed bottom-4 left-4 bg-gray-500 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg"
+          >
+            <ChevronLeft size={24} />
+          </button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
+
+  // Tela Pedidos
+  if (currentScreen === 'pedidos') {
+    const pedidosOrdenados = [...pedidos].sort((a, b) => new Date(a.dataEntrega) - new Date(b.dataEntrega));
+    return (
+      <div className="min-h-screen bg-pink-50 p-4">
+        <div className="max-w-md mx-auto">
+          <h2 className="text-2xl font-bold text-pink-800 mb-6">Pedidos Confirmados</h2>
+          {pedidosOrdenados.length === 0 ? (
+            <div className="text-center text-gray-500 mt-8">
+              Nenhum pedido confirmado<br />
+              <span className="text-sm">Confirme um orçamento primeiro!</span>
+            </div>
+          ) : (
+            pedidosOrdenados.map((pedido) => (
+              <div key={pedido.id} className="bg-white p-4 rounded-lg shadow mb-4">
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    {editingCliente === pedido.id ? (
+                      <div className="mb-2">
+                        <input
+                          type="text"
+                          defaultValue={pedido.cliente}
+                          onKeyPress={(e) => {
+                            if (e.key === 'Enter') savePedidoClienteEdit(pedido.id, e.target.value);
+                          }}
+                          onBlur={(e) => savePedidoClienteEdit(pedido.id, e.target.value)}
+                          className="w-full p-2 text-lg font-bold border border-gray-300 rounded-md"
+                          placeholder="Nome do cliente"
+                          autoFocus
+                        />
+                      </div>
+                    ) : (
+                      <div 
+                        className="font-bold text-lg cursor-pointer hover:bg-gray-100 p-1 rounded flex items-center gap-2"
+                        onClick={() => setEditingCliente(pedido.id)}
+                      >
+                        {pedido.cliente || (
+                          <span className="text-gray-400 italic">📝 Clique para adicionar nome</span>
+                        )}
+                        <Edit3 size={14} className="text-gray-400" />
+                      </div>
+                    )}
+                    <div className="text-sm text-gray-600">Orçamento: {formatDate(pedido.data)}</div>
+                    <div className="text-sm font-medium text-blue-600">Entrega: {formatDate(pedido.dataEntrega)}</div>
+                    {editingTema === pedido.id ? (
+                      <div className="mt-2">
+                        <input
+                          type="text"
+                          defaultValue={pedido.temaFesta}
+                          onKeyPress={(e) => {
+                            if (e.key === 'Enter') savePedidoTemaEdit(pedido.id, e.target.value);
+                          }}
+                          onBlur={(e) => savePedidoTemaEdit(pedido.id, e.target.value)}
+                          className="w-full p-2 text-sm border border-gray-300 rounded-md"
+                          placeholder="Tema da festa"
+                          autoFocus
+                        />
+                      </div>
+                    ) : (
+                      <div 
+                        className="text-sm text-purple-600 font-medium cursor-pointer hover:bg-gray-100 p-1 rounded flex items-center gap-2 mt-1"
+                        onClick={() => setEditingTema(pedido.id)}
+                      >
+                        {pedido.temaFesta ? (
+                          <>🎉 Tema: {pedido.temaFesta}</>
+                        ) : (
+                          <span className="text-gray-400 italic">🎉 Clique para adicionar tema</span>
+                        )}
+                        <Edit3 size={12} className="text-gray-400" />
+                      </div>
+                    )}
+                    {pedido.sinal > 0 && (
+                      <div className="text-sm text-gray-600">Sinal: {formatCurrency(pedido.sinal)}</div>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <div className="text-lg font-bold text-green-600">{formatCurrency(pedido.total)}</div>
+                    {pedido.sinal > 0 && (
+                      <div className="text-sm font-medium text-orange-600">Restante: {formatCurrency(pedido.restante)}</div>
+                    )}
+                  </div>
+                </div>
+                <div className="border-t pt-2 mt-2">
+                  {pedido.itens.map((item, index) => (
+                    <div key={index} className="flex justify-between text-sm mb-1">
+                      <span>{item.produto.nome} x{item.quantidade}</span>
+                      <span>{formatCurrency(item.total)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-2 mt-4">
+                  <button
+                    onClick={() => finalizarPedido(pedido)}
+                    className="flex-1 bg-green-500 hover:bg-green-600 text-white py-2 px-4 rounded-md flex items-center justify-center gap-2"
+                  ><Check size={16} /> Finalizar</button>
+                  <button
+                    onClick={() => cancelarPedido(pedido.id)}
+                    className="flex-1 bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded-md flex items-center justify-center gap-2"
+                  ><X size={16} /> Cancelar</button>
+                </div>
+              </div>
+            ))
+          )}
+          <button
+            onClick={() => setCurrentScreen('home')}
+            className="fixed bottom-4 left-4 bg-gray-500 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg"
+          >
+            <ChevronLeft size={24} />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Tela Finalizados
+  if (currentScreen === 'finalizados') {
+    const totalFinalizados = finalizados.reduce((sum, pedido) => sum + pedido.total, 0);
+    const mediaTicket = finalizados.length > 0 ? totalFinalizados / finalizados.length : 0;
+    return (
+      <div className="min-h-screen bg-pink-50 p-4">
+        <div className="max-w-md mx-auto">
+          <h2 className="text-2xl font-bold text-pink-800 mb-6">Pedidos Finalizados</h2>
+          <div className="bg-white p-4 rounded-lg shadow mb-4">
+            <h3 className="font-bold text-lg mb-4 text-center">💰 Dashboard Financeiro</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="text-center">
+                <div className="text-2xl font-bold text-green-600">{finalizados.length}</div>
+                <div className="text-sm text-gray-600">Pedidos</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-blue-600">{formatCurrency(totalFinalizados)}</div>
+                <div className="text-sm text-gray-600">Faturamento</div>
+              </div>
+              <div className="text-center col-span-2">
+                <div className="text-xl font-bold text-purple-600">{formatCurrency(mediaTicket)}</div>
+                <div className="text-sm text-gray-600">Ticket Médio</div>
+              </div>
+            </div>
+          </div>
+          {finalizados.length === 0 ? (
+            <div className="text-center text-gray-500 mt-8">
+              Nenhum pedido finalizado ainda<br />
+              <span className="text-sm">Finalize alguns pedidos para ver o dashboard!</span>
+            </div>
+          ) : (
+            finalizados.map((pedido) => (
+              <div key={pedido.id} className="bg-white p-4 rounded-lg shadow mb-4 border-l-4 border-green-500">
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    <div className="font-bold text-lg">{pedido.cliente || 'Cliente não informado'}</div>
+                    <div className="text-sm text-gray-600">Entrega: {formatDate(pedido.dataEntrega)}</div>
+                    <div className="text-sm text-gray-600">Finalizado: {formatDate(pedido.dataFinalizacao)}</div>
+                    {pedido.temaFesta && (
+                      <div className="text-sm text-purple-600 font-medium">🎉 {pedido.temaFesta}</div>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <div className="text-lg font-bold text-green-600">{formatCurrency(pedido.total)}</div>
+                    <div className="text-xs text-green-500">✅ PAGO</div>
+                  </div>
+                </div>
+                <div className="border-t pt-2 mt-2">
+                  {pedido.itens.slice(0, 3).map((item, index) => (
+                    <div key={index} className="flex justify-between text-sm mb-1">
+                      <span>{item.produto.nome} x{item.quantidade}</span>
+                      <span>{formatCurrency(item.total)}</span>
+                    </div>
+                  ))}
+                  {pedido.itens.length > 3 && (
+                    <div className="text-xs text-gray-500 text-center">
+                      ... e mais {pedido.itens.length - 3} itens
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+          <button
+            onClick={() => setCurrentScreen('home')}
+            className="fixed bottom-4 left-4 bg-gray-500 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg"
+          >
+            <ChevronLeft size={24} />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Tela Relatórios
+  if (currentScreen === 'relatorios') {
+    const totalVendas = finalizados.reduce((sum, pedido) => sum + pedido.total, 0);
+    const pedidosHoje = pedidos.filter(p => {
+      const hoje = new Date().toDateString();
+      const dataEntrega = new Date(p.dataEntrega).toDateString();
+      return dataEntrega === hoje;
+    });
+    const totalEntregasHoje = pedidosHoje.reduce((sum, pedido) => sum + pedido.total, 0);
+    const totalPedidosAtivos = pedidos.reduce((sum, pedido) => sum + pedido.total, 0);
+    const totalOrcamentos = orcamentos.reduce((sum, orcamento) => sum + orcamento.total, 0);
+    const produtosMaisVendidos = {};
+    finalizados.forEach(pedido => {
+      pedido.itens.forEach(item => {
+        if (produtosMaisVendidos[item.produto.nome]) {
+          produtosMaisVendidos[item.produto.nome] += item.quantidade;
+        } else {
+          produtosMaisVendidos[item.produto.nome] = item.quantidade;
+        }
+      });
+    });
+    const topProdutos = Object.entries(produtosMaisVendidos)
+      .sort(([,a], [,b]) => b - a)
+      .slice(0, 5);
+    return (
+      <div className="min-h-screen bg-pink-50 p-4">
+        <div className="max-w-md mx-auto">
+          <h2 className="text-2xl font-bold text-pink-800 mb-6">Relatórios</h2>
+          <div className="grid grid-cols-2 gap-4 mb-6">
+            <div className="bg-green-100 p-4 rounded-lg text-center">
+              <div className="text-2xl font-bold text-green-600">{formatCurrency(totalVendas)}</div>
+              <div className="text-sm text-green-700">Total Vendido</div>
+              <div className="text-xs text-green-600">{finalizados.length} pedidos</div>
+            </div>
+            <div className="bg-blue-100 p-4 rounded-lg text-center">
+              <div className="text-2xl font-bold text-blue-600">{formatCurrency(totalEntregasHoje)}</div>
+              <div className="text-sm text-blue-700">Entregas Hoje</div>
+              <div className="text-xs text-blue-600">{pedidosHoje.length} pedidos</div>
+            </div>
+            <div className="bg-purple-100 p-4 rounded-lg text-center">
+              <div className="text-2xl font-bold text-purple-600">{formatCurrency(totalPedidosAtivos)}</div>
+              <div className="text-sm text-purple-700">Pedidos Ativos</div>
+              <div className="text-xs text-purple-600">{pedidos.length} pedidos</div>
+            </div>
+            <div className="bg-orange-100 p-4 rounded-lg text-center">
+              <div className="text-2xl font-bold text-orange-600">{formatCurrency(totalOrcamentos)}</div>
+              <div className="text-sm text-orange-700">Orçamentos</div>
+              <div className="text-xs text-orange-600">{orcamentos.length} pendentes</div>
+            </div>
+          </div>
+          <div className="bg-white p-4 rounded-lg shadow mb-4">
+            <h3 className="font-bold text-lg mb-4">🏆 Top 5 Produtos</h3>
+            {topProdutos.length === 0 ? (
+              <div className="text-center text-gray-500">Nenhuma venda registrada ainda</div>
+            ) : (
+              topProdutos.map(([produto, quantidade], index) => (
+                <div key={produto} className="flex justify-between items-center mb-2 p-2 bg-gray-50 rounded">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg font-bold text-purple-600">#{index + 1}</span>
+                    <span className="text-sm">{produto}</span>
+                  </div>
+                  <span className="font-bold text-green-600">{quantidade}x</span>
+                </div>
+              ))
+            )}
+          </div>
+          {pedidosHoje.length > 0 && (
+            <div className="bg-white p-4 rounded-lg shadow mb-4">
+              <h3 className="font-bold text-lg mb-4">📅 Entregas de Hoje</h3>
+              {pedidosHoje.map(pedido => (
+                <div key={pedido.id} className="border-l-4 border-blue-500 pl-3 mb-3 bg-blue-50 p-2 rounded">
+                  <div className="font-medium">{pedido.cliente || 'Cliente não informado'}</div>
+                  <div className="text-sm text-gray-600">{formatCurrency(pedido.total)}</div>
+                  {pedido.temaFesta && (
+                    <div className="text-sm text-purple-600">🎉 {pedido.temaFesta}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded text-center">
+            📊 <strong>Em breve:</strong> Gráficos detalhados, análise por período e muito mais!
+          </div>
+          <button
+            onClick={() => setCurrentScreen('home')}
+            className="fixed bottom-4 left-4 bg-gray-500 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg"
+          >
+            <ChevronLeft size={24} />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Tela Produtos
+  if (currentScreen === 'produtos') {
+    const categorias = [...new Set(produtos.map(p => p.categoria))];
+    return (
+      <div className="min-h-screen bg-pink-50 p-4">
+        <div className="max-w-md mx-auto">
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-2xl font-bold text-pink-800">Catálogo de Produtos</h2>
+            <div className="flex gap-2">
+              <button
+                onClick={resetProducts}
+                className="bg-orange-500 hover:bg-orange-600 text-white px-3 py-2 rounded-md text-xs"
+                title="Restaurar catálogo original"
+              >
+                <RefreshCw size={16} />
+              </button>
+              <button
+                onClick={() => setShowAddProduct(true)}
+                className="bg-green-500 hover:bg-green-600 text-white p-2 rounded-full"
+                title="Adicionar novo produto"
+              >
+                <Plus size={20} />
+              </button>
+            </div>
+          </div>
+          {showAddProduct && (
+            <div className="bg-white p-4 rounded-lg shadow mb-4">
+              <h3 className="font-bold text-lg mb-4">➕ Adicionar Produto</h3>
+              <div className="mb-3">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Nome do Produto</label>
+                <input
+                  type="text"
+                  value={newProduct.nome}
+                  onChange={(e) => setNewProduct({...newProduct, nome: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-md"
+                  placeholder="Nome do produto"
+                />
+              </div>
+              <div className="mb-3">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Preço</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={newProduct.preco}
+                  onChange={(e) => setNewProduct({...newProduct, preco: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-md"
+                  placeholder="0,00"
+                />
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Categoria</label>
+                {newProduct.categoria === 'NOVA_CATEGORIA' ? (
+                  <input
+                    type="text"
+                    value={newProduct.novaCategoria || ''}
+                    onChange={(e) => setNewProduct({...newProduct, novaCategoria: e.target.value, categoria: e.target.value.toUpperCase()})}
+                    className="w-full p-2 border border-gray-300 rounded-md"
+                    placeholder="Nome da nova categoria"
+                    autoFocus
+                  />
+                ) : (
+                  <select
+                    value={newProduct.categoria}
+                    onChange={(e) => setNewProduct({...newProduct, categoria: e.target.value})}
+                    className="w-full p-2 border border-gray-300 rounded-md"
+                  >
+                    {categorias.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                    <option value="NOVA_CATEGORIA">+ Nova Categoria</option>
+                  </select>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={addNewProduct}
+                  className="flex-1 bg-green-500 hover:bg-green-600 text-white py-2 px-4 rounded-md"
+                >Adicionar</button>
+                <button
+                  onClick={() => setShowAddProduct(false)}
+                  className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded-md"
+                >Cancelar</button>
+              </div>
+            </div>
+          )}
+          {categorias.map(categoria => (
+            <div key={categoria} className="mb-6">
+              <h3 className="font-bold text-lg text-pink-700 mb-3 bg-pink-100 p-2 rounded flex justify-between items-center">
+                <span>{categoria}</span>
+                <span className="text-sm font-normal">{produtos.filter(p => p.categoria === categoria).length} itens</span>
+              </h3>
+              {produtos.filter(p => p.categoria === categoria).map(produto => (
+                <div key={produto.id} className="bg-white p-3 rounded-lg shadow mb-2">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1 mr-2">
+                      {editingProductName === produto.id ? (
+                        <input
+                          type="text"
+                          defaultValue={produto.nome}
+                          onKeyPress={(e) => {
+                            if (e.key === 'Enter') saveProductNameEdit(produto.id, e.target.value);
+                          }}
+                          onBlur={(e) => saveProductNameEdit(produto.id, e.target.value)}
+                          className="w-full p-1 text-sm font-medium border border-gray-300 rounded"
+                          autoFocus
+                        />
+                      ) : (
+                        <div 
+                          className="font-medium text-gray-800 cursor-pointer hover:bg-gray-100 p-1 rounded flex items-center gap-2"
+                          onClick={() => setEditingProductName(produto.id)}
+                        >
+                          {produto.nome}
+                          <Edit3 size={12} className="text-gray-400" />
+                        </div>
+                      )}
+                      <div className="text-sm text-gray-600">#{produto.id}</div>
+                    </div>
+                    <div className="text-right">
+                      {editingProductPrice === produto.id ? (
+                        <input
+                          type="number"
+                          step="0.01"
+                          defaultValue={produto.preco}
+                          onKeyPress={(e) => {
+                            if (e.key === 'Enter') saveProductPriceEdit(produto.id, e.target.value);
+                          }}
+                          onBlur={(e) => saveProductPriceEdit(produto.id, e.target.value)}
+                          className="w-20 p-1 text-sm font-bold text-right border border-gray-300 rounded"
+                          autoFocus
+                        />
+                      ) : (
+                        <div 
+                          className="text-lg font-bold text-green-600 cursor-pointer hover:bg-gray-100 p-1 rounded flex items-center gap-1"
+                          onClick={() => setEditingProductPrice(produto.id)}
+                        >
+                          {formatCurrency(produto.preco)}
+                          <Edit3 size={12} className="text-gray-400" />
+                        </div>
+                      )}
+                      <button
+                        onClick={() => deleteProduct(produto.id)}
+                        className="text-red-500 hover:text-red-700 text-xs mt-1"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
+          <div className="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded mb-4 text-center">
+            📝 <strong>Total:</strong> {produtos.length} produtos cadastrados<br />
+            💡 <strong>Dica:</strong> Clique nos nomes e preços para editar!<br />
+            <span className="text-sm">💾 Produtos salvos localmente no dispositivo</span>
+          </div>
+          <button
+            onClick={() => setCurrentScreen('home')}
+            className="fixed bottom-4 left-4 bg-gray-500 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg"
+          >
+            <ChevronLeft size={24} />
+          </button>
+        </div>
+      </div>
+    );
+  }
 };
 
 export default App;
