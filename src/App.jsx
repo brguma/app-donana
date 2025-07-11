@@ -1,4 +1,7 @@
-import React, { useState, useEffect } from 'react';
+          {/* Novidades */}
+          <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-3 py-2 rounded mb-4 text-center text-sm">
+            ✨ <strong>Sistema Atualizado!</strong> 
+            <br />import React, { useState, useEffect } from 'react';
 import { ChevronLeft, Plus, Check, X, Edit3, Save, Wifi, WifiOff, User, LogOut, Download, RefreshCw } from 'lucide-react';
 
 // Imports do Firebase
@@ -148,12 +151,12 @@ const App = () => {
     };
   }, []);
 
-  // Monitorar alterações nos produtos para salvar no localStorage
+  // Sistema de persistência - Produtos localmente, dados principais no Firebase
   useEffect(() => {
     localStorage.setItem('donana-produtos', JSON.stringify(produtos));
   }, [produtos]);
 
-  // Carregar produtos do localStorage na inicialização
+  // Carregar apenas produtos do localStorage na inicialização
   useEffect(() => {
     const produtosSalvos = localStorage.getItem('donana-produtos');
     if (produtosSalvos) {
@@ -182,22 +185,63 @@ const App = () => {
     };
   }, []);
 
-  // Monitorar autenticação
+  // Monitorar autenticação e carregar dados do Firebase
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
+      console.log('🔐 Status de autenticação mudou:', user ? user.uid : 'Deslogado');
       setUser(user);
       setLoading(false);
       if (user) {
+        console.log('👤 Usuário logado:', user.email, 'UID:', user.uid);
         loadUserData(user.uid);
       } else {
-        setOrcamentos([]);
-        setPedidos([]);
-        setFinalizados([]);
+        console.log('👤 Usuário deslogado, carregando backup local');
+        // Se não logado, limpar dados ou carregar backup local
+        loadLocalBackup();
       }
     });
 
     return () => unsubscribe();
   }, []);
+
+  // Carregar backup local apenas se não estiver logado
+  const loadLocalBackup = () => {
+    console.log('📱 Carregando backup local...');
+    try {
+      const orcamentosSalvos = localStorage.getItem('donana-orcamentos-backup');
+      const pedidosSalvos = localStorage.getItem('donana-pedidos-backup');
+      const finalizadosSalvos = localStorage.getItem('donana-finalizados-backup');
+
+      if (orcamentosSalvos) {
+        const orcamentosLocal = JSON.parse(orcamentosSalvos);
+        setOrcamentos(Array.isArray(orcamentosLocal) ? orcamentosLocal : []);
+        console.log('📊 Orçamentos locais carregados:', orcamentosLocal.length);
+      } else {
+        setOrcamentos([]);
+      }
+
+      if (pedidosSalvos) {
+        const pedidosLocal = JSON.parse(pedidosSalvos);
+        setPedidos(Array.isArray(pedidosLocal) ? pedidosLocal : []);
+        console.log('📊 Pedidos locais carregados:', pedidosLocal.length);
+      } else {
+        setPedidos([]);
+      }
+
+      if (finalizadosSalvos) {
+        const finalizadosLocal = JSON.parse(finalizadosSalvos);
+        setFinalizados(Array.isArray(finalizadosLocal) ? finalizadosLocal : []);
+        console.log('📊 Finalizados locais carregados:', finalizadosLocal.length);
+      } else {
+        setFinalizados([]);
+      }
+    } catch (error) {
+      console.log('❌ Erro ao carregar backup local:', error);
+      setOrcamentos([]);
+      setPedidos([]);
+      setFinalizados([]);
+    }
+  };
 
   // PWA Functions
   const handleInstallApp = async () => {
@@ -222,52 +266,96 @@ const App = () => {
     localStorage.setItem('installPromptDismissed', 'true');
   };
 
-  // Carregar dados do usuário
+  // Carregar dados do usuário do Firebase
   const loadUserData = async (userId) => {
     try {
       setLoading(true);
+      console.log('🔄 Carregando dados do Firebase para:', userId);
 
-      // Carregar orçamentos
+      // Carregar orçamentos (SEM orderBy primeiro para testar)
       const orcamentosQuery = query(
         collection(db, 'orcamentos'), 
-        where('userId', '==', userId),
-        orderBy('createdAt', 'desc')
+        where('userId', '==', userId)
       );
       const orcamentosSnapshot = await getDocs(orcamentosQuery);
-      const orcamentosData = orcamentosSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      const orcamentosData = orcamentosSnapshot.docs.map(doc => {
+        const data = doc.data();
+        console.log('📄 Orçamento encontrado:', doc.id, data);
+        return {
+          id: doc.id,
+          ...data,
+          syncedWithFirebase: true
+        };
+      });
+      
+      // Ordenar manualmente por data
+      orcamentosData.sort((a, b) => {
+        const dateA = new Date(a.data || a.createdAt?.toDate?.() || a.createdAt);
+        const dateB = new Date(b.data || b.createdAt?.toDate?.() || b.createdAt);
+        return dateB - dateA;
+      });
+      
       setOrcamentos(orcamentosData);
+      console.log('✅ Orçamentos carregados:', orcamentosData.length);
 
       // Carregar pedidos
       const pedidosQuery = query(
         collection(db, 'pedidos'), 
-        where('userId', '==', userId),
-        orderBy('dataEntrega', 'asc')
+        where('userId', '==', userId)
       );
       const pedidosSnapshot = await getDocs(pedidosQuery);
-      const pedidosData = pedidosSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      const pedidosData = pedidosSnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          syncedWithFirebase: true
+        };
+      });
+      
+      // Ordenar por data de entrega
+      pedidosData.sort((a, b) => new Date(a.dataEntrega) - new Date(b.dataEntrega));
+      
       setPedidos(pedidosData);
+      console.log('✅ Pedidos carregados:', pedidosData.length);
 
       // Carregar finalizados
       const finalizadosQuery = query(
         collection(db, 'finalizados'), 
-        where('userId', '==', userId),
-        orderBy('dataFinalizacao', 'desc')
+        where('userId', '==', userId)
       );
       const finalizadosSnapshot = await getDocs(finalizadosQuery);
-      const finalizadosData = finalizadosSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      const finalizadosData = finalizadosSnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          syncedWithFirebase: true
+        };
+      });
+      
+      // Ordenar por data de finalização
+      finalizadosData.sort((a, b) => {
+        const dateA = new Date(a.dataFinalizacao);
+        const dateB = new Date(b.dataFinalizacao);
+        return dateB - dateA;
+      });
+      
       setFinalizados(finalizadosData);
+      console.log('✅ Finalizados carregados:', finalizadosData.length);
+
+      // Fazer backup local após carregar do Firebase
+      localStorage.setItem('donana-orcamentos-backup', JSON.stringify(orcamentosData));
+      localStorage.setItem('donana-pedidos-backup', JSON.stringify(pedidosData));
+      localStorage.setItem('donana-finalizados-backup', JSON.stringify(finalizadosData));
+
+      console.log('🎉 Todos os dados carregados com sucesso!');
 
     } catch (error) {
-      console.error('Erro ao carregar dados:', error);
+      console.error('❌ Erro ao carregar dados do Firebase:', error);
+      console.log('🔄 Tentando carregar backup local...');
+      // Em caso de erro, tentar carregar backup local
+      loadLocalBackup();
     } finally {
       setLoading(false);
     }
@@ -341,38 +429,48 @@ const App = () => {
     setQuantidade('');
   };
 
-  // Funções Firebase
+  // Salvar orçamento - FOCO NO FIREBASE
   const saveOrcamento = async () => {
     if (carrinho.length === 0) return;
+    
+    // Verificar se está logado
     if (!user) {
-      alert('Faça login para salvar orçamentos');
+      alert('⚠️ Faça login para salvar orçamentos na nuvem!');
       setShowAuth(true);
       return;
     }
 
     try {
       setAuthLoading(true);
+      console.log('💾 Salvando orçamento no Firebase...');
       
+      const agora = new Date();
       const novoOrcamento = {
         cliente: nomeCliente.trim() || '',
-        data: new Date().toISOString(),
+        data: agora.toISOString(),
         itens: [...carrinho],
         total: carrinho.reduce((sum, item) => sum + item.total, 0),
         userId: user.uid,
-        createdAt: new Date()
+        createdAt: agora // Usar Date normal ao invés de Timestamp
       };
 
+      // SALVAR NO FIREBASE
       const docRef = await addDoc(collection(db, 'orcamentos'), novoOrcamento);
+      console.log('✅ Orçamento salvo no Firebase:', docRef.id);
       
-      setOrcamentos([{ id: docRef.id, ...novoOrcamento }, ...orcamentos]);
       clearCarrinho();
       setNomeCliente('');
       setShowClienteInput(false);
+      
+      // FORÇAR RECARREGAMENTO DOS DADOS
+      await loadUserData(user.uid);
+      
       setCurrentScreen('home');
+      alert('✅ Orçamento salvo com sucesso!');
 
     } catch (error) {
-      console.error('Erro ao salvar orçamento:', error);
-      alert('Erro ao salvar orçamento');
+      console.error('❌ Erro ao salvar no Firebase:', error);
+      alert('❌ Erro ao salvar orçamento. Verifique sua conexão e tente novamente.');
     } finally {
       setAuthLoading(false);
     }
@@ -431,8 +529,13 @@ const App = () => {
 
   const confirmarOrcamento = async (orcamento) => {
     if (!dataEntrega || !valorSinal) return;
+    if (!user) {
+      alert('Faça login para confirmar pedidos!');
+      return;
+    }
 
     try {
+      console.log('🔄 Confirmando orçamento...');
       const sinalNumerico = parseFloat(valorSinal.replace(',', '.')) || 0;
       
       const novoPedido = {
@@ -447,17 +550,141 @@ const App = () => {
 
       // Remover campos desnecessários
       delete novoPedido.id;
+      delete novoPedido.syncedWithFirebase;
 
+      // SALVAR NO FIREBASE
       const docRef = await addDoc(collection(db, 'pedidos'), novoPedido);
-      await deleteDoc(doc(db, 'orcamentos', orcamento.id));
       
-      setPedidos([{ id: docRef.id, ...novoPedido }, ...pedidos]);
+      // REMOVER DO FIREBASE (orçamentos)
+      if (orcamento.syncedWithFirebase) {
+        await deleteDoc(doc(db, 'orcamentos', orcamento.id));
+      }
+      
+      // Atualizar estados locais
+      const pedidoSalvo = { id: docRef.id, ...novoPedido, syncedWithFirebase: true };
+      setPedidos([pedidoSalvo, ...pedidos]);
       setOrcamentos(orcamentos.filter(o => o.id !== orcamento.id));
+      
+      // Backup local
+      localStorage.setItem('donana-pedidos-backup', JSON.stringify([pedidoSalvo, ...pedidos]));
+      localStorage.setItem('donana-orcamentos-backup', JSON.stringify(orcamentos.filter(o => o.id !== orcamento.id)));
       
       setDataEntrega('');
       setValorSinal('');
       setTemaFesta('');
       setShowDataEntrega(false);
+      
+      console.log('✅ Orçamento confirmado no Firebase');
+
+    } catch (error) {
+      console.error('❌ Erro ao confirmar orçamento:', error);
+      alert('Erro ao confirmar orçamento. Verifique sua conexão.');
+    }
+  };
+
+  const finalizarPedido = async (pedido) => {
+    if (!user) {
+      alert('Faça login para finalizar pedidos!');
+      return;
+    }
+
+    try {
+      console.log('🔄 Finalizando pedido...');
+      
+      const pedidoFinalizado = {
+        ...pedido,
+        dataFinalizacao: new Date().toISOString(),
+        userId: user.uid
+      };
+
+      // Remover campos desnecessários
+      delete pedidoFinalizado.id;
+      delete pedidoFinalizado.syncedWithFirebase;
+
+      // SALVAR NO FIREBASE
+      const docRef = await addDoc(collection(db, 'finalizados'), pedidoFinalizado);
+      
+      // REMOVER DO FIREBASE (pedidos)
+      if (pedido.syncedWithFirebase) {
+        await deleteDoc(doc(db, 'pedidos', pedido.id));
+      }
+      
+      // Atualizar estados locais
+      const finalizadoSalvo = { id: docRef.id, ...pedidoFinalizado, syncedWithFirebase: true };
+      setFinalizados([finalizadoSalvo, ...finalizados]);
+      setPedidos(pedidos.filter(p => p.id !== pedido.id));
+      
+      // Backup local
+      localStorage.setItem('donana-finalizados-backup', JSON.stringify([finalizadoSalvo, ...finalizados]));
+      localStorage.setItem('donana-pedidos-backup', JSON.stringify(pedidos.filter(p => p.id !== pedido.id)));
+      
+      console.log('✅ Pedido finalizado no Firebase');
+      
+    } catch (error) {
+      console.error('❌ Erro ao finalizar pedido:', error);
+      alert('Erro ao finalizar pedido. Verifique sua conexão.');
+    }
+  };
+
+  const cancelarOrcamento = async (orcamentoId) => {
+    if (window.confirm('Tem certeza que deseja cancelar este orçamento?')) {
+      if (!user) {
+        alert('Faça login para gerenciar orçamentos!');
+        return;
+      }
+
+      try {
+        const orcamento = orcamentos.find(o => o.id === orcamentoId);
+        
+        // REMOVER DO FIREBASE
+        if (orcamento?.syncedWithFirebase) {
+          await deleteDoc(doc(db, 'orcamentos', orcamentoId));
+        }
+        
+        // Atualizar estado local
+        const novosOrcamentos = orcamentos.filter(o => o.id !== orcamentoId);
+        setOrcamentos(novosOrcamentos);
+        
+        // Backup local
+        localStorage.setItem('donana-orcamentos-backup', JSON.stringify(novosOrcamentos));
+        
+        console.log('✅ Orçamento cancelado');
+      } catch (error) {
+        console.error('❌ Erro ao cancelar orçamento:', error);
+        alert('Erro ao cancelar orçamento');
+      }
+    }
+  };
+
+  const cancelarPedido = async (pedidoId) => {
+    if (window.confirm('Tem certeza que deseja cancelar este pedido?')) {
+      if (!user) {
+        alert('Faça login para gerenciar pedidos!');
+        return;
+      }
+
+      try {
+        const pedido = pedidos.find(p => p.id === pedidoId);
+        
+        // REMOVER DO FIREBASE
+        if (pedido?.syncedWithFirebase) {
+          await deleteDoc(doc(db, 'pedidos', pedidoId));
+        }
+        
+        // Atualizar estado local
+        const novosPedidos = pedidos.filter(p => p.id !== pedidoId);
+        setPedidos(novosPedidos);
+        
+        // Backup local
+        localStorage.setItem('donana-pedidos-backup', JSON.stringify(novosPedidos));
+        
+        console.log('✅ Pedido cancelado');
+      } catch (error) {
+        console.error('❌ Erro ao cancelar pedido:', error);
+        alert('Erro ao cancelar pedido');
+      }
+    }
+  };setShowDataEntrega(false);
 
     } catch (error) {
       console.error('Erro ao confirmar orçamento:', error);
@@ -733,9 +960,32 @@ const App = () => {
           {/* Indicador de dados */}
           <div className="bg-blue-100 border border-blue-400 text-blue-700 px-3 py-2 rounded mb-4 text-center text-sm">
             {isAppInstalled ? '📱 App Instalado' : '🌐 Versão Web'} • 
-            {user ? ' ☁️ Dados sincronizados' : ' 🔒 Faça login para sincronizar'}
-            <br />
-            📊 {orcamentos.length} orçamentos • {pedidos.length} pedidos • {finalizados.length} finalizados
+            {user ? (
+              <span>
+                {isOnline ? ' ☁️ Conectado ao Firebase' : ' 📡 Aguardando conexão'}
+                <br />
+                📊 {orcamentos.length} orçamentos • {pedidos.length} pedidos • {finalizados.length} finalizados
+                <br />
+                <button 
+                  onClick={forceReloadData}
+                  className="text-xs bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded mt-1 mr-2"
+                >
+                  🔄 Recarregar
+                </button>
+                <button 
+                  onClick={clearLocalData}
+                  className="text-xs bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded mt-1"
+                >
+                  🗑️ Limpar Cache
+                </button>
+              </span>
+            ) : (
+              <span>
+                🔒 Faça login para salvar na nuvem
+                <br />
+                📱 Dados temporários: {orcamentos.length} orçamentos • {pedidos.length} pedidos • {finalizados.length} finalizados
+              </span>
+            )}
           </div>
 
           {/* Novidades */}
@@ -1437,11 +1687,7 @@ const App = () => {
             <br />
             💡 <strong>Dica:</strong> Clique nos nomes e preços para editar!
             <br />
-            {user ? (
-              <span className="text-sm">☁️ Alterações salvas localmente</span>
-            ) : (
-              <span className="text-sm">🔒 Faça login para sincronizar produtos</span>
-            )}
+            <span className="text-sm">💾 Produtos salvos localmente no dispositivo</span>
           </div>
 
           <button
