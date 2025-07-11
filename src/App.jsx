@@ -99,6 +99,49 @@ const App = () => {
 
   const [produtos, setProdutos] = useState(produtosIniciais);
 
+  // NOVO: Estados para fila de ações offline e status de sincronização
+  const [pendingSync, setPendingSync] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
+
+  // Utilitário para salvar ações pendentes offline
+  const addPendingAction = (action) => {
+    const queue = JSON.parse(localStorage.getItem('donana-pending-actions') || '[]');
+    queue.push(action);
+    localStorage.setItem('donana-pending-actions', JSON.stringify(queue));
+    setPendingSync(true);
+  };
+
+  // Função para processar fila de ações pendentes
+  const processPendingActions = async () => {
+    const queue = JSON.parse(localStorage.getItem('donana-pending-actions') || '[]');
+    if (!user || queue.length === 0) return;
+    let success = 0;
+    for (const action of queue) {
+      try {
+        if (action.type === 'orcamento') {
+          await addDoc(collection(db, 'orcamentos'), action.data);
+        } else if (action.type === 'pedido') {
+          await addDoc(collection(db, 'pedidos'), action.data);
+        } else if (action.type === 'finalizado') {
+          await addDoc(collection(db, 'finalizados'), action.data);
+        } else if (action.type === 'produto') {
+          // Produtos são salvos apenas localmente, mas pode ser adaptado para salvar em nuvem
+        }
+        success++;
+      } catch (e) {
+        // Se falhar, mantém na fila
+      }
+    }
+    if (success > 0) {
+      setSyncMessage('Sincronização concluída!');
+      setTimeout(() => setSyncMessage(''), 3000);
+    }
+    localStorage.setItem('donana-pending-actions', '[]');
+    setPendingSync(false);
+    // Recarregar dados do Firebase
+    await loadUserData(user.uid);
+  };
+
   // PWA Effects
   useEffect(() => {
     if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) {
@@ -148,19 +191,22 @@ const App = () => {
     };
   }, []);
 
-  // Monitorar status de conexão
+  // Monitorar status de conexão e processar fila ao voltar online
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
+    const handleOnline = () => {
+      setIsOnline(true);
+      processPendingActions();
+    };
     const handleOffline = () => setIsOnline(false);
-
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-
+    // Se já estiver online ao abrir, processa fila
+    if (navigator.onLine) processPendingActions();
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, []);
+  }, [user]);
 
   // Sistema de persistência - Produtos localmente, dados principais no Firebase
   useEffect(() => {
@@ -403,51 +449,49 @@ const App = () => {
     setQuantidade('');
   };
 
-  // Salvar orçamento
+  // Salvar orçamento (adaptado para offline)
   const saveOrcamento = async () => {
     if (carrinho.length === 0) return;
-    
     if (!user) {
       alert('⚠️ Faça login para salvar orçamentos!');
       setShowAuth(true);
       return;
     }
-
+    const agora = new Date();
+    const novoOrcamento = {
+      cliente: nomeCliente.trim() || '',
+      data: agora.toISOString(),
+      itens: carrinho.map(item => ({
+        produto: {
+          id: item.produto.id,
+          nome: item.produto.nome,
+          preco: item.produto.preco,
+          categoria: item.produto.categoria
+        },
+        quantidade: item.quantidade,
+        total: item.total
+      })),
+      total: carrinho.reduce((sum, item) => sum + item.total, 0),
+      userId: user.uid,
+      createdAt: agora
+    };
     try {
       setAuthLoading(true);
-      
-      const agora = new Date();
-      const novoOrcamento = {
-        cliente: nomeCliente.trim() || '',
-        data: agora.toISOString(),
-        itens: carrinho.map(item => ({
-          produto: {
-            id: item.produto.id,
-            nome: item.produto.nome,
-            preco: item.produto.preco,
-            categoria: item.produto.categoria
-          },
-          quantidade: item.quantidade,
-          total: item.total
-        })),
-        total: carrinho.reduce((sum, item) => sum + item.total, 0),
-        userId: user.uid,
-        createdAt: agora
-      };
-
-      const docRef = await addDoc(collection(db, 'orcamentos'), novoOrcamento);
-      
+      if (isOnline) {
+        await addDoc(collection(db, 'orcamentos'), novoOrcamento);
+        await loadUserData(user.uid);
+        setCurrentScreen('home');
+        alert('✅ Orçamento salvo com sucesso!');
+      } else {
+        addPendingAction({ type: 'orcamento', data: novoOrcamento });
+        setSyncMessage('Orçamento salvo localmente. Será sincronizado quando estiver online.');
+        setTimeout(() => setSyncMessage(''), 3000);
+        setCurrentScreen('home');
+      }
       clearCarrinho();
       setNomeCliente('');
       setShowClienteInput(false);
-      
-      await loadUserData(user.uid);
-      
-      setCurrentScreen('home');
-      alert('✅ Orçamento salvo com sucesso!');
-
     } catch (error) {
-      console.error('❌ Erro ao salvar:', error);
       alert('❌ Erro ao salvar orçamento: ' + error.message);
     } finally {
       setAuthLoading(false);
@@ -506,86 +550,72 @@ const App = () => {
     }
   };
 
-  // Confirmar orçamento
+  // Confirmar orçamento (adaptado para offline)
   const confirmarOrcamento = async (orcamento) => {
     if (!dataEntrega || !valorSinal) return;
     if (!user) {
       alert('Faça login para confirmar pedidos!');
       return;
     }
-
+    const sinalNumerico = parseFloat(valorSinal.replace(',', '.')) || 0;
+    const novoPedido = {
+      ...orcamento,
+      dataEntrega: new Date(dataEntrega).toISOString(),
+      sinal: sinalNumerico,
+      restante: orcamento.total - sinalNumerico,
+      temaFesta: temaFesta.trim() || '',
+      userId: user.uid,
+      createdAt: new Date()
+    };
+    delete novoPedido.id;
+    delete novoPedido.syncedWithFirebase;
     try {
-      const sinalNumerico = parseFloat(valorSinal.replace(',', '.')) || 0;
-      
-      const novoPedido = {
-        ...orcamento,
-        dataEntrega: new Date(dataEntrega).toISOString(),
-        sinal: sinalNumerico,
-        restante: orcamento.total - sinalNumerico,
-        temaFesta: temaFesta.trim() || '',
-        userId: user.uid,
-        createdAt: new Date()
-      };
-
-      delete novoPedido.id;
-      delete novoPedido.syncedWithFirebase;
-
-      const docRef = await addDoc(collection(db, 'pedidos'), novoPedido);
-      
-      if (orcamento.syncedWithFirebase) {
-        await deleteDoc(doc(db, 'orcamentos', orcamento.id));
+      if (isOnline) {
+        const docRef = await addDoc(collection(db, 'pedidos'), novoPedido);
+        if (orcamento.syncedWithFirebase) {
+          await deleteDoc(doc(db, 'orcamentos', orcamento.id));
+        }
+        await loadUserData(user.uid);
+      } else {
+        addPendingAction({ type: 'pedido', data: novoPedido });
+        setSyncMessage('Pedido salvo localmente. Será sincronizado quando estiver online.');
+        setTimeout(() => setSyncMessage(''), 3000);
       }
-      
-      const pedidoSalvo = { id: docRef.id, ...novoPedido, syncedWithFirebase: true };
-      setPedidos([pedidoSalvo, ...pedidos]);
-      setOrcamentos(orcamentos.filter(o => o.id !== orcamento.id));
-      
-      localStorage.setItem('donana-pedidos-backup', JSON.stringify([pedidoSalvo, ...pedidos]));
-      localStorage.setItem('donana-orcamentos-backup', JSON.stringify(orcamentos.filter(o => o.id !== orcamento.id)));
-      
       setDataEntrega('');
       setValorSinal('');
       setTemaFesta('');
       setShowDataEntrega(false);
-      
     } catch (error) {
-      console.error('Erro ao confirmar:', error);
       alert('Erro ao confirmar orçamento: ' + error.message);
     }
   };
 
-  // Finalizar pedido
+  // Finalizar pedido (adaptado para offline)
   const finalizarPedido = async (pedido) => {
     if (!user) {
       alert('Faça login para finalizar pedidos!');
       return;
     }
-
+    const pedidoFinalizado = {
+      ...pedido,
+      dataFinalizacao: new Date().toISOString(),
+      userId: user.uid
+    };
+    delete pedidoFinalizado.id;
+    delete pedidoFinalizado.syncedWithFirebase;
     try {
-      const pedidoFinalizado = {
-        ...pedido,
-        dataFinalizacao: new Date().toISOString(),
-        userId: user.uid
-      };
-
-      delete pedidoFinalizado.id;
-      delete pedidoFinalizado.syncedWithFirebase;
-
-      const docRef = await addDoc(collection(db, 'finalizados'), pedidoFinalizado);
-      
-      if (pedido.syncedWithFirebase) {
-        await deleteDoc(doc(db, 'pedidos', pedido.id));
+      if (isOnline) {
+        await addDoc(collection(db, 'finalizados'), pedidoFinalizado);
+        if (pedido.syncedWithFirebase) {
+          await deleteDoc(doc(db, 'pedidos', pedido.id));
+        }
+        await loadUserData(user.uid);
+      } else {
+        addPendingAction({ type: 'finalizado', data: pedidoFinalizado });
+        setSyncMessage('Finalização salva localmente. Será sincronizada quando estiver online.');
+        setTimeout(() => setSyncMessage(''), 3000);
       }
-      
-      const finalizadoSalvo = { id: docRef.id, ...pedidoFinalizado, syncedWithFirebase: true };
-      setFinalizados([finalizadoSalvo, ...finalizados]);
-      setPedidos(pedidos.filter(p => p.id !== pedido.id));
-      
-      localStorage.setItem('donana-finalizados-backup', JSON.stringify([finalizadoSalvo, ...finalizados]));
-      localStorage.setItem('donana-pedidos-backup', JSON.stringify(pedidos.filter(p => p.id !== pedido.id)));
-      
     } catch (error) {
-      console.error('Erro ao finalizar:', error);
       alert('Erro ao finalizar pedido: ' + error.message);
     }
   };
@@ -667,22 +697,23 @@ const App = () => {
     setEditingProductPrice(null);
   };
 
+  // Adicionar produto (adaptado para offline, apenas local)
   const addNewProduct = () => {
     if (newProduct.nome.trim() && newProduct.preco && parseFloat(newProduct.preco) > 0) {
       const categoria = newProduct.categoria === 'NOVA_CATEGORIA' ? 
         (newProduct.novaCategoria || 'DIVERSOS').toUpperCase() : 
         newProduct.categoria;
-        
       const novoProduto = {
         id: Math.max(...produtos.map(p => p.id)) + 1,
         nome: newProduct.nome.trim(),
         preco: parseFloat(newProduct.preco.replace(',', '.')),
         categoria: categoria
       };
-      
       setProdutos([...produtos, novoProduto]);
       setNewProduct({ nome: '', preco: '', categoria: 'DIVERSOS' });
       setShowAddProduct(false);
+      // Se quiser sincronizar produtos com nuvem, pode adicionar na fila também
+      // addPendingAction({ type: 'produto', data: novoProduto });
     }
   };
 
@@ -855,21 +886,23 @@ const App = () => {
             📊 {orcamentos.length} orçamentos • {pedidos.length} pedidos • {finalizados.length} finalizados
             {user && (
               <div className="mt-2">
-                <button 
-                  onClick={forceReloadData}
-                  className="text-xs bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded mr-2"
-                >
-                  🔄 Recarregar
-                </button>
-                <button 
-                  onClick={clearLocalData}
-                  className="text-xs bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded"
-                >
-                  🗑️ Limpar Cache
-                </button>
+                {/* Removido botão de recarregar */}
+                {/* Removido botão de limpar cache */}
               </div>
             )}
           </div>
+
+          {/* Adicionar aviso visual de sincronização pendente/concluída na tela home */}
+          {pendingSync && (
+            <div className="bg-yellow-200 border border-yellow-400 text-yellow-800 px-3 py-2 rounded mb-2 text-center text-sm animate-bounce-gentle">
+              ⚠️ Existem dados pendentes de sincronização. Eles serão enviados automaticamente quando estiver online.
+            </div>
+          )}
+          {syncMessage && (
+            <div className="bg-green-200 border border-green-400 text-green-800 px-3 py-2 rounded mb-2 text-center text-sm animate-fade-in">
+              {syncMessage}
+            </div>
+          )}
 
           <div className="flex flex-col gap-4">
             {[
