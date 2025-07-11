@@ -1,4 +1,104 @@
-          {/* Novidades */}
+  // Carregar dados do usuário do Firebase - VERSÃO ROBUSTA
+  const loadUserData = async (userId) => {
+    if (!userId) {
+      console.log('⚠️ UserID não fornecido');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      console.log('🔄 Carregando dados do Firebase para:', userId);
+
+      // Verificar se Firebase está configurado
+      if (!db) {
+        console.log('⚠️ Firebase não configurado, usando dados locais');
+        loadLocalBackup();
+        return;
+      }
+
+      // Carregar orçamentos
+      console.log('📊 Buscando orçamentos...');
+      const orcamentosRef = collection(db, 'orcamentos');
+      const orcamentosQuery = query(orcamentosRef, where('userId', '==', userId));
+      const orcamentosSnapshot = await getDocs(orcamentosQuery);
+      
+      const orcamentosData = orcamentosSnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          syncedWithFirebase: true
+        };
+      });
+      
+      // Ordenar por data
+      orcamentosData.sort((a, b) => {
+        const dateA = new Date(a.data || a.createdAt?.toDate?.() || a.createdAt || 0);
+        const dateB = new Date(b.data || b.createdAt?.toDate?.() || b.createdAt || 0);
+        return dateB - dateA;
+      });
+      
+      setOrcamentos(orcamentosData);
+      console.log('✅ Orçamentos carregados:', orcamentosData.length);
+
+      // Carregar pedidos
+      console.log('📊 Buscando pedidos...');
+      const pedidosRef = collection(db, 'pedidos');
+      const pedidosQuery = query(pedidosRef, where('userId', '==', userId));
+      const pedidosSnapshot = await getDocs(pedidosQuery);
+      
+      const pedidosData = pedidosSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        syncedWithFirebase: true
+      }));
+      
+      pedidosData.sort((a, b) => new Date(a.dataEntrega || 0) - new Date(b.dataEntrega || 0));
+      setPedidos(pedidosData);
+      console.log('✅ Pedidos carregados:', pedidosData.length);
+
+      // Carregar finalizados
+      console.log('📊 Buscando finalizados...');
+      const finalizadosRef = collection(db, 'finalizados');
+      const finalizadosQuery = query(finalizadosRef, where('userId', '==', userId));
+      const finalizadosSnapshot = await getDocs(finalizadosQuery);
+      
+      const finalizadosData = finalizadosSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        syncedWithFirebase: true
+      }));
+      
+      finalizadosData.sort((a, b) => {
+        const dateA = new Date(a.dataFinalizacao || 0);
+        const dateB = new Date(b.dataFinalizacao || 0);
+        return dateB - dateA;
+      });
+      
+      setFinalizados(finalizadosData);
+      console.log('✅ Finalizados carregados:', finalizadosData.length);
+
+      // Backup local após sucesso
+      try {
+        localStorage.setItem('donana-orcamentos-backup', JSON.stringify(orcamentosData));
+        localStorage.setItem('donana-pedidos-backup', JSON.stringify(pedidosData));
+        localStorage.setItem('donana-finalizados-backup', JSON.stringify(finalizadosData));
+      } catch (e) {
+        console.log('⚠️ Erro ao salvar backup local:', e);
+      }
+
+      console.log('🎉 Carregamento Firebase completo!');
+
+    } catch (error) {
+      console.error('❌ Erro ao carregar do Firebase:', error);
+      
+      // Em caso de erro, tentar backup local
+      console.log('🔄 Tentando backup local...');
+      loadLocalBackup();
+    } finally {
+      setLoading(false);
+    }
+  };          {/* Novidades */}
           <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-3 py-2 rounded mb-4 text-center text-sm">
             ✨ <strong>Sistema Atualizado!</strong> 
             <br />import React, { useState, useEffect } from 'react';
@@ -102,49 +202,56 @@ const App = () => {
 
   const [produtos, setProdutos] = useState(produtosIniciais);
 
-  // PWA Effects
+  // PWA Effects - COM PROTEÇÕES
   useEffect(() => {
-    // Check if app is already installed
-    if (window.matchMedia('(display-mode: standalone)').matches) {
+    // Verificar se está instalado
+    if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) {
       setIsAppInstalled(true);
     }
 
-    // Listen for beforeinstallprompt event
+    // Event listeners para PWA
     const handleBeforeInstallPrompt = (e) => {
       e.preventDefault();
       setDeferredPrompt(e);
       
-      // Only show if not dismissed before
+      // Só mostrar se não foi dispensado antes
       const dismissed = localStorage.getItem('installPromptDismissed');
       if (!dismissed) {
         setShowInstallPrompt(true);
       }
     };
 
-    // Listen for app installed event
     const handleAppInstalled = () => {
       setIsAppInstalled(true);
       setShowInstallPrompt(false);
       setDeferredPrompt(null);
     };
 
+    // Registrar eventos
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('appinstalled', handleAppInstalled);
 
-    // Check for service worker updates
+    // Service Worker para atualizações
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.ready.then((registration) => {
-        registration.addEventListener('updatefound', () => {
-          const newWorker = registration.installing;
-          newWorker.addEventListener('statechange', () => {
-            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-              setUpdateAvailable(true);
+      navigator.serviceWorker.ready
+        .then((registration) => {
+          registration.addEventListener('updatefound', () => {
+            const newWorker = registration.installing;
+            if (newWorker) {
+              newWorker.addEventListener('statechange', () => {
+                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                  setUpdateAvailable(true);
+                }
+              });
             }
           });
+        })
+        .catch((error) => {
+          console.log('Service Worker não disponível:', error);
         });
-      });
     }
 
+    // Cleanup
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
@@ -188,25 +295,33 @@ const App = () => {
   // Monitorar autenticação e carregar dados do Firebase
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      console.log('🔐 Status de autenticação mudou:', user ? user.uid : 'Deslogado');
+      console.log('🔐 Status de autenticação:', user ? `Logado: ${user.email}` : 'Deslogado');
       setUser(user);
       setLoading(false);
+      
       if (user) {
-        console.log('👤 Usuário logado:', user.email, 'UID:', user.uid);
+        console.log('👤 Carregando dados para:', user.uid);
         loadUserData(user.uid);
       } else {
-        console.log('👤 Usuário deslogado, carregando backup local');
-        // Se não logado, limpar dados ou carregar backup local
-        loadLocalBackup();
+        console.log('👤 Sem usuário, limpando dados');
+        // Limpar dados quando deslogar
+        setOrcamentos([]);
+        setPedidos([]);
+        setFinalizados([]);
       }
     });
 
     return () => unsubscribe();
   }, []);
 
-  // Carregar backup local apenas se não estiver logado
+  // Carregar backup local apenas quando necessário
   const loadLocalBackup = () => {
-    console.log('📱 Carregando backup local...');
+    if (!user) {
+      console.log('👤 Sem usuário logado, não carregando backup');
+      return;
+    }
+    
+    console.log('📱 Carregando backup local para usuário logado...');
     try {
       const orcamentosSalvos = localStorage.getItem('donana-orcamentos-backup');
       const pedidosSalvos = localStorage.getItem('donana-pedidos-backup');
@@ -266,29 +381,27 @@ const App = () => {
     localStorage.setItem('installPromptDismissed', 'true');
   };
 
-  // Carregar dados do usuário do Firebase
+  // Carregar dados do usuário do Firebase - SEM ÍNDICES
   const loadUserData = async (userId) => {
     try {
       setLoading(true);
       console.log('🔄 Carregando dados do Firebase para:', userId);
 
-      // Carregar orçamentos (SEM orderBy primeiro para testar)
-      const orcamentosQuery = query(
-        collection(db, 'orcamentos'), 
-        where('userId', '==', userId)
-      );
-      const orcamentosSnapshot = await getDocs(orcamentosQuery);
-      const orcamentosData = orcamentosSnapshot.docs.map(doc => {
-        const data = doc.data();
-        console.log('📄 Orçamento encontrado:', doc.id, data);
-        return {
-          id: doc.id,
-          ...data,
-          syncedWithFirebase: true
-        };
-      });
+      // Carregar TODOS os orçamentos primeiro, depois filtrar
+      console.log('📊 Buscando orçamentos...');
+      const orcamentosSnapshot = await getDocs(collection(db, 'orcamentos'));
+      const todosOrcamentos = orcamentosSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        syncedWithFirebase: true
+      }));
       
-      // Ordenar manualmente por data
+      // Filtrar por userId no JavaScript
+      const orcamentosData = todosOrcamentos.filter(o => o.userId === userId);
+      console.log('📄 Total orçamentos no Firebase:', todosOrcamentos.length);
+      console.log('📄 Orçamentos do usuário:', orcamentosData.length);
+      
+      // Ordenar por data
       orcamentosData.sort((a, b) => {
         const dateA = new Date(a.data || a.createdAt?.toDate?.() || a.createdAt);
         const dateB = new Date(b.data || b.createdAt?.toDate?.() || b.createdAt);
@@ -296,45 +409,36 @@ const App = () => {
       });
       
       setOrcamentos(orcamentosData);
-      console.log('✅ Orçamentos carregados:', orcamentosData.length);
 
       // Carregar pedidos
-      const pedidosQuery = query(
-        collection(db, 'pedidos'), 
-        where('userId', '==', userId)
-      );
-      const pedidosSnapshot = await getDocs(pedidosQuery);
-      const pedidosData = pedidosSnapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data,
-          syncedWithFirebase: true
-        };
-      });
+      console.log('📊 Buscando pedidos...');
+      const pedidosSnapshot = await getDocs(collection(db, 'pedidos'));
+      const todosPedidos = pedidosSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        syncedWithFirebase: true
+      }));
       
-      // Ordenar por data de entrega
+      const pedidosData = todosPedidos.filter(p => p.userId === userId);
+      console.log('📄 Total pedidos no Firebase:', todosPedidos.length);
+      console.log('📄 Pedidos do usuário:', pedidosData.length);
+      
       pedidosData.sort((a, b) => new Date(a.dataEntrega) - new Date(b.dataEntrega));
-      
       setPedidos(pedidosData);
-      console.log('✅ Pedidos carregados:', pedidosData.length);
 
       // Carregar finalizados
-      const finalizadosQuery = query(
-        collection(db, 'finalizados'), 
-        where('userId', '==', userId)
-      );
-      const finalizadosSnapshot = await getDocs(finalizadosQuery);
-      const finalizadosData = finalizadosSnapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data,
-          syncedWithFirebase: true
-        };
-      });
+      console.log('📊 Buscando finalizados...');
+      const finalizadosSnapshot = await getDocs(collection(db, 'finalizados'));
+      const todosFinalizados = finalizadosSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        syncedWithFirebase: true
+      }));
       
-      // Ordenar por data de finalização
+      const finalizadosData = todosFinalizados.filter(f => f.userId === userId);
+      console.log('📄 Total finalizados no Firebase:', todosFinalizados.length);
+      console.log('📄 Finalizados do usuário:', finalizadosData.length);
+      
       finalizadosData.sort((a, b) => {
         const dateA = new Date(a.dataFinalizacao);
         const dateB = new Date(b.dataFinalizacao);
@@ -342,19 +446,22 @@ const App = () => {
       });
       
       setFinalizados(finalizadosData);
-      console.log('✅ Finalizados carregados:', finalizadosData.length);
 
-      // Fazer backup local após carregar do Firebase
+      // Backup local
       localStorage.setItem('donana-orcamentos-backup', JSON.stringify(orcamentosData));
       localStorage.setItem('donana-pedidos-backup', JSON.stringify(pedidosData));
       localStorage.setItem('donana-finalizados-backup', JSON.stringify(finalizadosData));
 
-      console.log('🎉 Todos os dados carregados com sucesso!');
+      console.log('🎉 Dados carregados com sucesso!');
+      console.log('📊 Resumo:', {
+        orcamentos: orcamentosData.length,
+        pedidos: pedidosData.length,
+        finalizados: finalizadosData.length
+      });
 
     } catch (error) {
       console.error('❌ Erro ao carregar dados do Firebase:', error);
       console.log('🔄 Tentando carregar backup local...');
-      // Em caso de erro, tentar carregar backup local
       loadLocalBackup();
     } finally {
       setLoading(false);
@@ -429,48 +536,61 @@ const App = () => {
     setQuantidade('');
   };
 
-  // Salvar orçamento - FOCO NO FIREBASE
+  // Salvar orçamento - CORRIGIDO PARA GARANTIR SINCRONIZAÇÃO
   const saveOrcamento = async () => {
     if (carrinho.length === 0) return;
     
     // Verificar se está logado
     if (!user) {
-      alert('⚠️ Faça login para salvar orçamentos na nuvem!');
+      alert('⚠️ Faça login para salvar orçamentos!');
       setShowAuth(true);
       return;
     }
 
     try {
       setAuthLoading(true);
-      console.log('💾 Salvando orçamento no Firebase...');
+      console.log('💾 Salvando orçamento no Firebase para usuário:', user.uid);
       
       const agora = new Date();
       const novoOrcamento = {
         cliente: nomeCliente.trim() || '',
         data: agora.toISOString(),
-        itens: [...carrinho],
+        itens: carrinho.map(item => ({
+          produto: {
+            id: item.produto.id,
+            nome: item.produto.nome,
+            preco: item.produto.preco,
+            categoria: item.produto.categoria
+          },
+          quantidade: item.quantidade,
+          total: item.total
+        })),
         total: carrinho.reduce((sum, item) => sum + item.total, 0),
         userId: user.uid,
-        createdAt: agora // Usar Date normal ao invés de Timestamp
+        createdAt: agora
       };
+
+      console.log('📄 Dados a serem salvos:', novoOrcamento);
 
       // SALVAR NO FIREBASE
       const docRef = await addDoc(collection(db, 'orcamentos'), novoOrcamento);
-      console.log('✅ Orçamento salvo no Firebase:', docRef.id);
+      console.log('✅ Orçamento salvo no Firebase com ID:', docRef.id);
       
+      // Limpar formulário
       clearCarrinho();
       setNomeCliente('');
       setShowClienteInput(false);
       
-      // FORÇAR RECARREGAMENTO DOS DADOS
+      // RECARREGAR dados do Firebase
+      console.log('🔄 Recarregando dados...');
       await loadUserData(user.uid);
       
       setCurrentScreen('home');
       alert('✅ Orçamento salvo com sucesso!');
 
     } catch (error) {
-      console.error('❌ Erro ao salvar no Firebase:', error);
-      alert('❌ Erro ao salvar orçamento. Verifique sua conexão e tente novamente.');
+      console.error('❌ Erro detalhado ao salvar:', error);
+      alert('❌ Erro ao salvar orçamento: ' + error.message);
     } finally {
       setAuthLoading(false);
     }
