@@ -114,32 +114,57 @@ const App = () => {
   // Função para processar fila de ações pendentes
   const processPendingActions = async () => {
     const queue = JSON.parse(localStorage.getItem('donana-pending-actions') || '[]');
-    if (!user || queue.length === 0) return;
+    console.log('📋 Processando fila de ações pendentes:', queue.length, 'itens');
+    
+    if (!user || queue.length === 0) {
+      console.log('✅ Nenhuma ação pendente para processar');
+      return;
+    }
+    
     let success = 0;
+    let errors = 0;
+    
     for (const action of queue) {
       try {
+        console.log('📤 Processando ação:', action.type);
+        
         if (action.type === 'orcamento') {
           await addDoc(collection(db, 'orcamentos'), action.data);
+          console.log('✅ Orçamento sincronizado');
         } else if (action.type === 'pedido') {
           await addDoc(collection(db, 'pedidos'), action.data);
+          console.log('✅ Pedido sincronizado');
         } else if (action.type === 'finalizado') {
           await addDoc(collection(db, 'finalizados'), action.data);
+          console.log('✅ Finalizado sincronizado');
         } else if (action.type === 'produto') {
-          // Produtos são salvos apenas localmente, mas pode ser adaptado para salvar em nuvem
+          // Produtos são salvos apenas localmente
+          console.log('ℹ️ Produto - salvamento local apenas');
         }
         success++;
       } catch (e) {
-        // Se falhar, mantém na fila
+        console.error('❌ Erro ao processar ação:', action.type, e);
+        errors++;
       }
     }
+    
+    console.log(`📊 Resultado: ${success} sucessos, ${errors} erros`);
+    
     if (success > 0) {
-      setSyncMessage('Sincronização concluída!');
+      setSyncMessage(`✅ ${success} itens sincronizados com sucesso!`);
       setTimeout(() => setSyncMessage(''), 3000);
     }
-    localStorage.setItem('donana-pending-actions', '[]');
-    setPendingSync(false);
-    // Recarregar dados do Firebase
-    await loadUserData(user.uid);
+    
+    if (errors > 0) {
+      setSyncMessage(`⚠️ ${errors} itens com erro na sincronização`);
+      setTimeout(() => setSyncMessage(''), 5000);
+    }
+    
+    // Limpar fila apenas se não houve erros
+    if (errors === 0) {
+      localStorage.setItem('donana-pending-actions', '[]');
+      setPendingSync(false);
+    }
   };
 
   // PWA Effects
@@ -273,11 +298,10 @@ const App = () => {
       const orcamentosRef = collection(db, 'orcamentos');
       console.log('🔍 Consultando coleção orcamentos...');
       const orcamentosSnapshot = await getDocs(orcamentosRef);
-      console.log('📄 Documentos encontrados:', orcamentosSnapshot.docs.length);
+      console.log('📄 Orçamentos encontrados:', orcamentosSnapshot.docs.length);
       
       const orcamentosData = orcamentosSnapshot.docs.map(doc => {
         const data = doc.data();
-        console.log('📋 Orçamento encontrado:', doc.id, data);
         return {
           id: doc.id,
           ...data,
@@ -296,7 +320,9 @@ const App = () => {
 
       // Carregar TODOS os pedidos (sem filtro por usuário)
       const pedidosRef = collection(db, 'pedidos');
+      console.log('🔍 Consultando coleção pedidos...');
       const pedidosSnapshot = await getDocs(pedidosRef);
+      console.log('📄 Pedidos encontrados:', pedidosSnapshot.docs.length);
       
       const pedidosData = pedidosSnapshot.docs.map(doc => ({
         id: doc.id,
@@ -310,7 +336,9 @@ const App = () => {
 
       // Carregar TODOS os finalizados (sem filtro por usuário)
       const finalizadosRef = collection(db, 'finalizados');
+      console.log('🔍 Consultando coleção finalizados...');
       const finalizadosSnapshot = await getDocs(finalizadosRef);
+      console.log('📄 Finalizados encontrados:', finalizadosSnapshot.docs.length);
       
       const finalizadosData = finalizadosSnapshot.docs.map(doc => ({
         id: doc.id,
@@ -389,41 +417,34 @@ const App = () => {
     }
   };
 
-  // Função de teste para verificar acesso ao Firebase
-  const testFirebaseAccess = async () => {
-    console.log('🧪 Testando acesso ao Firebase...');
+  // Função para sincronização manual
+  const sincronizarManualmente = async () => {
+    if (!user) {
+      alert('⚠️ Faça login para sincronizar!');
+      return;
+    }
+    
+    console.log('🔄 Iniciando sincronização manual...');
+    setLoading(true);
+    
     try {
-      // Testar leitura
-      const testRef = collection(db, 'orcamentos');
-      const testSnapshot = await getDocs(testRef);
-      console.log('✅ Leitura OK. Documentos encontrados:', testSnapshot.docs.length);
+      // Primeiro, processar ações pendentes
+      console.log('📤 Processando ações pendentes...');
+      await processPendingActions();
       
-      if (testSnapshot.docs.length > 0) {
-        const firstDoc = testSnapshot.docs[0];
-        console.log('📋 Primeiro documento:', firstDoc.id, firstDoc.data());
-      }
+      // Depois, recarregar dados do Firebase
+      console.log('📥 Recarregando dados do Firebase...');
+      await loadUserData(user.uid);
       
-      // Testar escrita (criar um documento de teste)
-      const testDoc = {
-        teste: true,
-        timestamp: new Date().toISOString(),
-        userId: user.uid
-      };
-      
-      const writeRef = await addDoc(collection(db, 'teste'), testDoc);
-      console.log('✅ Escrita OK. Documento de teste criado:', writeRef.id);
-      
-      // Limpar documento de teste
-      await deleteDoc(doc(db, 'teste', writeRef.id));
-      console.log('✅ Limpeza OK. Documento de teste removido');
+      setSyncMessage('✅ Sincronização concluída com sucesso!');
+      setTimeout(() => setSyncMessage(''), 3000);
       
     } catch (error) {
-      console.error('❌ Erro no acesso ao Firebase:', error);
-      console.error('🔍 Detalhes do erro:', {
-        code: error.code,
-        message: error.message,
-        stack: error.stack
-      });
+      console.error('❌ Erro na sincronização:', error);
+      setSyncMessage('❌ Erro na sincronização: ' + error.message);
+      setTimeout(() => setSyncMessage(''), 5000);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -997,18 +1018,13 @@ const App = () => {
             {user ? (
               <div className="mt-2">
                 👥 <strong>Dados compartilhados:</strong> Todos os usuários logados veem as mesmas informações
-                <div className="mt-2 flex gap-2 justify-center">
+                <div className="mt-2 flex justify-center">
                   <button 
-                    onClick={testFirebaseAccess}
-                    className="text-xs bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded"
+                    onClick={sincronizarManualmente}
+                    disabled={loading}
+                    className="text-xs bg-purple-500 hover:bg-purple-600 disabled:bg-gray-400 text-white px-3 py-1 rounded flex items-center gap-1"
                   >
-                    🧪 Testar Firebase
-                  </button>
-                  <button 
-                    onClick={forceReloadData}
-                    className="text-xs bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded"
-                  >
-                    🔄 Recarregar
+                    {loading ? '⏳' : '🔄'} Sincronizar Manualmente
                   </button>
                 </div>
               </div>
