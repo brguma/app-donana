@@ -294,11 +294,10 @@ const App = () => {
 
       console.log('📊 Carregando dados do Firebase...');
 
-      // Carregar orçamentos do usuário atual (voltar ao sistema anterior)
+      // Carregar TODOS os orçamentos (sistema compartilhado)
       const orcamentosRef = collection(db, 'orcamentos');
-      const orcamentosQuery = query(orcamentosRef, where('userId', '==', userId));
-      console.log('🔍 Consultando orçamentos do usuário:', userId);
-      const orcamentosSnapshot = await getDocs(orcamentosQuery);
+      console.log('🔍 Consultando TODOS os orçamentos...');
+      const orcamentosSnapshot = await getDocs(orcamentosRef);
       console.log('📄 Orçamentos encontrados:', orcamentosSnapshot.docs.length);
       
       const orcamentosData = orcamentosSnapshot.docs.map(doc => {
@@ -319,11 +318,10 @@ const App = () => {
       console.log('✅ Orçamentos carregados:', orcamentosData.length);
       setOrcamentos(orcamentosData);
 
-      // Carregar pedidos do usuário atual
+      // Carregar TODOS os pedidos (sistema compartilhado)
       const pedidosRef = collection(db, 'pedidos');
-      const pedidosQuery = query(pedidosRef, where('userId', '==', userId));
-      console.log('🔍 Consultando pedidos do usuário:', userId);
-      const pedidosSnapshot = await getDocs(pedidosQuery);
+      console.log('🔍 Consultando TODOS os pedidos...');
+      const pedidosSnapshot = await getDocs(pedidosRef);
       console.log('📄 Pedidos encontrados:', pedidosSnapshot.docs.length);
       
       const pedidosData = pedidosSnapshot.docs.map(doc => ({
@@ -336,11 +334,10 @@ const App = () => {
       console.log('✅ Pedidos carregados:', pedidosData.length);
       setPedidos(pedidosData);
 
-      // Carregar finalizados do usuário atual
+      // Carregar TODOS os finalizados (sistema compartilhado)
       const finalizadosRef = collection(db, 'finalizados');
-      const finalizadosQuery = query(finalizadosRef, where('userId', '==', userId));
-      console.log('🔍 Consultando finalizados do usuário:', userId);
-      const finalizadosSnapshot = await getDocs(finalizadosQuery);
+      console.log('🔍 Consultando TODOS os finalizados...');
+      const finalizadosSnapshot = await getDocs(finalizadosRef);
       console.log('📄 Finalizados encontrados:', finalizadosSnapshot.docs.length);
       
       const finalizadosData = finalizadosSnapshot.docs.map(doc => ({
@@ -1020,7 +1017,7 @@ const App = () => {
             📊 {orcamentos.length} orçamentos • {pedidos.length} pedidos • {finalizados.length} finalizados
             {user ? (
               <div className="mt-2">
-                👤 <strong>Dados individuais:</strong> Cada usuário vê seus próprios dados
+                👥 <strong>Dados compartilhados:</strong> Todos os usuários logados veem as mesmas informações
                 <div className="mt-2 flex justify-center">
                   <button 
                     onClick={sincronizarManualmente}
@@ -1033,7 +1030,7 @@ const App = () => {
               </div>
             ) : (
               <div className="mt-2">
-                🔒 <strong>Faça login</strong> para acessar seus dados
+                🔒 <strong>Faça login</strong> para acessar dados compartilhados da equipe
               </div>
             )}
           </div>
