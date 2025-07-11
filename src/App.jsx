@@ -271,13 +271,19 @@ const App = () => {
 
       // Carregar TODOS os orçamentos (sem filtro por usuário)
       const orcamentosRef = collection(db, 'orcamentos');
+      console.log('🔍 Consultando coleção orcamentos...');
       const orcamentosSnapshot = await getDocs(orcamentosRef);
+      console.log('📄 Documentos encontrados:', orcamentosSnapshot.docs.length);
       
-      const orcamentosData = orcamentosSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        syncedWithFirebase: true
-      }));
+      const orcamentosData = orcamentosSnapshot.docs.map(doc => {
+        const data = doc.data();
+        console.log('📋 Orçamento encontrado:', doc.id, data);
+        return {
+          id: doc.id,
+          ...data,
+          syncedWithFirebase: true
+        };
+      });
       
       orcamentosData.sort((a, b) => {
         const dateA = new Date(a.data || a.createdAt?.toDate?.() || a.createdAt || 0);
@@ -333,6 +339,34 @@ const App = () => {
 
     } catch (error) {
       console.error('❌ Erro ao carregar do Firebase:', error);
+      
+      // Se houver erro, tentar carregar backup local
+      console.log('🔄 Tentando carregar backup local...');
+      try {
+        const orcamentosBackup = localStorage.getItem('donana-orcamentos-backup');
+        const pedidosBackup = localStorage.getItem('donana-pedidos-backup');
+        const finalizadosBackup = localStorage.getItem('donana-finalizados-backup');
+        
+        if (orcamentosBackup) {
+          const orcamentosLocal = JSON.parse(orcamentosBackup);
+          setOrcamentos(Array.isArray(orcamentosLocal) ? orcamentosLocal : []);
+          console.log('📊 Orçamentos locais carregados:', orcamentosLocal.length);
+        }
+        
+        if (pedidosBackup) {
+          const pedidosLocal = JSON.parse(pedidosBackup);
+          setPedidos(Array.isArray(pedidosLocal) ? pedidosLocal : []);
+          console.log('📊 Pedidos locais carregados:', pedidosLocal.length);
+        }
+        
+        if (finalizadosBackup) {
+          const finalizadosLocal = JSON.parse(finalizadosBackup);
+          setFinalizados(Array.isArray(finalizadosLocal) ? finalizadosLocal : []);
+          console.log('📊 Finalizados locais carregados:', finalizadosLocal.length);
+        }
+      } catch (backupError) {
+        console.error('❌ Erro ao carregar backup local:', backupError);
+      }
     } finally {
       setLoading(false);
     }
@@ -346,11 +380,50 @@ const App = () => {
     
     setLoading(true);
     try {
+      console.log('🔄 Forçando recarregamento de dados...');
       await loadUserData(user.uid);
     } catch (error) {
-      console.error('Erro ao recarregar:', error);
+      console.error('❌ Erro ao recarregar:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Função de teste para verificar acesso ao Firebase
+  const testFirebaseAccess = async () => {
+    console.log('🧪 Testando acesso ao Firebase...');
+    try {
+      // Testar leitura
+      const testRef = collection(db, 'orcamentos');
+      const testSnapshot = await getDocs(testRef);
+      console.log('✅ Leitura OK. Documentos encontrados:', testSnapshot.docs.length);
+      
+      if (testSnapshot.docs.length > 0) {
+        const firstDoc = testSnapshot.docs[0];
+        console.log('📋 Primeiro documento:', firstDoc.id, firstDoc.data());
+      }
+      
+      // Testar escrita (criar um documento de teste)
+      const testDoc = {
+        teste: true,
+        timestamp: new Date().toISOString(),
+        userId: user.uid
+      };
+      
+      const writeRef = await addDoc(collection(db, 'teste'), testDoc);
+      console.log('✅ Escrita OK. Documento de teste criado:', writeRef.id);
+      
+      // Limpar documento de teste
+      await deleteDoc(doc(db, 'teste', writeRef.id));
+      console.log('✅ Limpeza OK. Documento de teste removido');
+      
+    } catch (error) {
+      console.error('❌ Erro no acesso ao Firebase:', error);
+      console.error('🔍 Detalhes do erro:', {
+        code: error.code,
+        message: error.message,
+        stack: error.stack
+      });
     }
   };
 
@@ -924,6 +997,20 @@ const App = () => {
             {user ? (
               <div className="mt-2">
                 👥 <strong>Dados compartilhados:</strong> Todos os usuários logados veem as mesmas informações
+                <div className="mt-2 flex gap-2 justify-center">
+                  <button 
+                    onClick={testFirebaseAccess}
+                    className="text-xs bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded"
+                  >
+                    🧪 Testar Firebase
+                  </button>
+                  <button 
+                    onClick={forceReloadData}
+                    className="text-xs bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded"
+                  >
+                    🔄 Recarregar
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="mt-2">
