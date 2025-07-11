@@ -1017,7 +1017,6 @@ const App = () => {
             📊 {orcamentos.length} orçamentos • {pedidos.length} pedidos • {finalizados.length} finalizados
             {user ? (
               <div className="mt-2">
-                👥 <strong>Dados compartilhados:</strong> Todos os usuários logados veem as mesmas informações
                 <div className="mt-2 flex justify-center">
                   <button 
                     onClick={sincronizarManualmente}
