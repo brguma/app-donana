@@ -1,7 +1,4 @@
-          {/* Novidades */}
-          <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-3 py-2 rounded mb-4 text-center text-sm">
-            ✨ <strong>Sistema Atualizado!</strong> 
-            <br />import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ChevronLeft, Plus, Check, X, Edit3, Save, Wifi, WifiOff, User, LogOut, Download, RefreshCw } from 'lucide-react';
 
 // Imports do Firebase
@@ -102,26 +99,89 @@ const App = () => {
 
   const [produtos, setProdutos] = useState(produtosIniciais);
 
+  // NOVO: Estados para fila de ações offline e status de sincronização
+  const [pendingSync, setPendingSync] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
+
+  // Utilitário para salvar ações pendentes offline
+  const addPendingAction = (action) => {
+    const queue = JSON.parse(localStorage.getItem('donana-pending-actions') || '[]');
+    queue.push(action);
+    localStorage.setItem('donana-pending-actions', JSON.stringify(queue));
+    setPendingSync(true);
+  };
+
+  // Função para processar fila de ações pendentes
+  const processPendingActions = async () => {
+    const queue = JSON.parse(localStorage.getItem('donana-pending-actions') || '[]');
+    console.log('📋 Processando fila de ações pendentes:', queue.length, 'itens');
+    
+    if (!user || queue.length === 0) {
+      console.log('✅ Nenhuma ação pendente para processar');
+      return;
+    }
+    
+    let success = 0;
+    let errors = 0;
+    
+    for (const action of queue) {
+      try {
+        console.log('📤 Processando ação:', action.type);
+        
+        if (action.type === 'orcamento') {
+          await addDoc(collection(db, 'orcamentos'), action.data);
+          console.log('✅ Orçamento sincronizado');
+        } else if (action.type === 'pedido') {
+          await addDoc(collection(db, 'pedidos'), action.data);
+          console.log('✅ Pedido sincronizado');
+        } else if (action.type === 'finalizado') {
+          await addDoc(collection(db, 'finalizados'), action.data);
+          console.log('✅ Finalizado sincronizado');
+        } else if (action.type === 'produto') {
+          // Produtos são salvos apenas localmente
+          console.log('ℹ️ Produto - salvamento local apenas');
+        }
+        success++;
+      } catch (e) {
+        console.error('❌ Erro ao processar ação:', action.type, e);
+        errors++;
+      }
+    }
+    
+    console.log(`📊 Resultado: ${success} sucessos, ${errors} erros`);
+    
+    if (success > 0) {
+      setSyncMessage(`✅ ${success} itens sincronizados com sucesso!`);
+      setTimeout(() => setSyncMessage(''), 3000);
+    }
+    
+    if (errors > 0) {
+      setSyncMessage(`⚠️ ${errors} itens com erro na sincronização`);
+      setTimeout(() => setSyncMessage(''), 5000);
+    }
+    
+    // Limpar fila apenas se não houve erros
+    if (errors === 0) {
+      localStorage.setItem('donana-pending-actions', '[]');
+      setPendingSync(false);
+    }
+  };
+
   // PWA Effects
   useEffect(() => {
-    // Check if app is already installed
-    if (window.matchMedia('(display-mode: standalone)').matches) {
+    if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) {
       setIsAppInstalled(true);
     }
 
-    // Listen for beforeinstallprompt event
     const handleBeforeInstallPrompt = (e) => {
       e.preventDefault();
       setDeferredPrompt(e);
-      
-      // Only show if not dismissed before
       const dismissed = localStorage.getItem('installPromptDismissed');
       if (!dismissed) {
         setShowInstallPrompt(true);
       }
     };
 
-    // Listen for app installed event
     const handleAppInstalled = () => {
       setIsAppInstalled(true);
       setShowInstallPrompt(false);
@@ -131,18 +191,23 @@ const App = () => {
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('appinstalled', handleAppInstalled);
 
-    // Check for service worker updates
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.ready.then((registration) => {
-        registration.addEventListener('updatefound', () => {
-          const newWorker = registration.installing;
-          newWorker.addEventListener('statechange', () => {
-            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-              setUpdateAvailable(true);
+      navigator.serviceWorker.ready
+        .then((registration) => {
+          registration.addEventListener('updatefound', () => {
+            const newWorker = registration.installing;
+            if (newWorker) {
+              newWorker.addEventListener('statechange', () => {
+                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                  setUpdateAvailable(true);
+                }
+              });
             }
           });
+        })
+        .catch((error) => {
+          console.warn('Service Worker não disponível:', error);
         });
-      });
     }
 
     return () => {
@@ -150,6 +215,23 @@ const App = () => {
       window.removeEventListener('appinstalled', handleAppInstalled);
     };
   }, []);
+
+  // Monitorar status de conexão e processar fila ao voltar online
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      processPendingActions();
+    };
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    // Se já estiver online ao abrir, processa fila
+    if (navigator.onLine) processPendingActions();
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [user]);
 
   // Sistema de persistência - Produtos localmente, dados principais no Firebase
   useEffect(() => {
@@ -166,80 +248,218 @@ const App = () => {
           setProdutos(produtosParsed);
         }
       } catch (error) {
-        console.log('Erro ao carregar produtos salvos:', error);
+        console.warn('Erro ao carregar produtos salvos:', error);
       }
     }
   }, []);
 
-  // Monitorar status de conexão
+  // Monitorar autenticação
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
-
-  // Monitorar autenticação e carregar dados do Firebase
-  useEffect(() => {
+    console.log('👁️ Monitorando mudanças de autenticação...');
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      console.log('🔐 Status de autenticação mudou:', user ? user.uid : 'Deslogado');
+      console.log('🔐 Status de autenticação mudou:', user ? `Logado: ${user.email}` : 'Deslogado');
       setUser(user);
       setLoading(false);
+      
       if (user) {
-        console.log('👤 Usuário logado:', user.email, 'UID:', user.uid);
+        console.log('👤 Usuário logado, carregando dados...');
         loadUserData(user.uid);
       } else {
-        console.log('👤 Usuário deslogado, carregando backup local');
-        // Se não logado, limpar dados ou carregar backup local
-        loadLocalBackup();
+        console.log('👤 Usuário deslogado, limpando dados...');
+        setOrcamentos([]);
+        setPedidos([]);
+        setFinalizados([]);
       }
     });
 
     return () => unsubscribe();
   }, []);
 
-  // Carregar backup local apenas se não estiver logado
-  const loadLocalBackup = () => {
-    console.log('📱 Carregando backup local...');
+  // Carregar dados do usuário do Firebase
+  const loadUserData = async (userId) => {
+    console.log('🔄 loadUserData chamado com userId:', userId);
+    
+    if (!userId) {
+      console.log('❌ userId não fornecido');
+      return;
+    }
+
     try {
-      const orcamentosSalvos = localStorage.getItem('donana-orcamentos-backup');
-      const pedidosSalvos = localStorage.getItem('donana-pedidos-backup');
-      const finalizadosSalvos = localStorage.getItem('donana-finalizados-backup');
+      setLoading(true);
 
-      if (orcamentosSalvos) {
-        const orcamentosLocal = JSON.parse(orcamentosSalvos);
-        setOrcamentos(Array.isArray(orcamentosLocal) ? orcamentosLocal : []);
-        console.log('📊 Orçamentos locais carregados:', orcamentosLocal.length);
-      } else {
-        setOrcamentos([]);
+      if (!db) {
+        console.log('❌ db não disponível');
+        return;
       }
 
-      if (pedidosSalvos) {
-        const pedidosLocal = JSON.parse(pedidosSalvos);
-        setPedidos(Array.isArray(pedidosLocal) ? pedidosLocal : []);
-        console.log('📊 Pedidos locais carregados:', pedidosLocal.length);
-      } else {
-        setPedidos([]);
+      console.log('📊 Carregando dados do Firebase...');
+
+      // Carregar TODOS os orçamentos (sistema compartilhado)
+      const orcamentosRef = collection(db, 'orcamentos');
+      console.log('🔍 Consultando TODOS os orçamentos...');
+      const orcamentosSnapshot = await getDocs(orcamentosRef);
+      console.log('📄 Orçamentos encontrados:', orcamentosSnapshot.docs.length);
+      
+      const orcamentosData = orcamentosSnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          syncedWithFirebase: true
+        };
+      });
+      
+      orcamentosData.sort((a, b) => {
+        const dateA = new Date(a.data || a.createdAt?.toDate?.() || a.createdAt || 0);
+        const dateB = new Date(b.data || b.createdAt?.toDate?.() || b.createdAt || 0);
+        return dateB - dateA;
+      });
+      
+      console.log('✅ Orçamentos carregados:', orcamentosData.length);
+      setOrcamentos(orcamentosData);
+
+      // Carregar TODOS os pedidos (sistema compartilhado)
+      const pedidosRef = collection(db, 'pedidos');
+      console.log('🔍 Consultando TODOS os pedidos...');
+      const pedidosSnapshot = await getDocs(pedidosRef);
+      console.log('📄 Pedidos encontrados:', pedidosSnapshot.docs.length);
+      
+      const pedidosData = pedidosSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        syncedWithFirebase: true
+      }));
+      
+      pedidosData.sort((a, b) => new Date(a.dataEntrega || 0) - new Date(b.dataEntrega || 0));
+      console.log('✅ Pedidos carregados:', pedidosData.length);
+      setPedidos(pedidosData);
+
+      // Carregar TODOS os finalizados (sistema compartilhado)
+      const finalizadosRef = collection(db, 'finalizados');
+      console.log('🔍 Consultando TODOS os finalizados...');
+      const finalizadosSnapshot = await getDocs(finalizadosRef);
+      console.log('📄 Finalizados encontrados:', finalizadosSnapshot.docs.length);
+      
+      const finalizadosData = finalizadosSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        syncedWithFirebase: true
+      }));
+      
+      finalizadosData.sort((a, b) => {
+        const dateA = new Date(a.dataFinalizacao || 0);
+        const dateB = new Date(b.dataFinalizacao || 0);
+        return dateB - dateA;
+      });
+      
+      console.log('✅ Finalizados carregados:', finalizadosData.length);
+      setFinalizados(finalizadosData);
+
+      // Backup local
+      try {
+        localStorage.setItem('donana-orcamentos-backup', JSON.stringify(orcamentosData));
+        localStorage.setItem('donana-pedidos-backup', JSON.stringify(pedidosData));
+        localStorage.setItem('donana-finalizados-backup', JSON.stringify(finalizadosData));
+        console.log('💾 Backup local salvo');
+      } catch (e) {
+        console.warn('Erro ao salvar backup:', e);
       }
 
-      if (finalizadosSalvos) {
-        const finalizadosLocal = JSON.parse(finalizadosSalvos);
-        setFinalizados(Array.isArray(finalizadosLocal) ? finalizadosLocal : []);
-        console.log('📊 Finalizados locais carregados:', finalizadosLocal.length);
-      } else {
-        setFinalizados([]);
-      }
     } catch (error) {
-      console.log('❌ Erro ao carregar backup local:', error);
-      setOrcamentos([]);
-      setPedidos([]);
-      setFinalizados([]);
+      console.error('❌ Erro ao carregar do Firebase:', error);
+      
+      // Se houver erro, tentar carregar backup local
+      console.log('🔄 Tentando carregar backup local...');
+      try {
+        const orcamentosBackup = localStorage.getItem('donana-orcamentos-backup');
+        const pedidosBackup = localStorage.getItem('donana-pedidos-backup');
+        const finalizadosBackup = localStorage.getItem('donana-finalizados-backup');
+        
+        if (orcamentosBackup) {
+          const orcamentosLocal = JSON.parse(orcamentosBackup);
+          setOrcamentos(Array.isArray(orcamentosLocal) ? orcamentosLocal : []);
+          console.log('📊 Orçamentos locais carregados:', orcamentosLocal.length);
+        }
+        
+        if (pedidosBackup) {
+          const pedidosLocal = JSON.parse(pedidosBackup);
+          setPedidos(Array.isArray(pedidosLocal) ? pedidosLocal : []);
+          console.log('📊 Pedidos locais carregados:', pedidosLocal.length);
+        }
+        
+        if (finalizadosBackup) {
+          const finalizadosLocal = JSON.parse(finalizadosBackup);
+          setFinalizados(Array.isArray(finalizadosLocal) ? finalizadosLocal : []);
+          console.log('📊 Finalizados locais carregados:', finalizadosLocal.length);
+        }
+      } catch (backupError) {
+        console.error('❌ Erro ao carregar backup local:', backupError);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Função para forçar recarregamento
+  const forceReloadData = async () => {
+    if (!user) {
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      console.log('🔄 Forçando recarregamento de dados...');
+      await loadUserData(user.uid);
+    } catch (error) {
+      console.error('❌ Erro ao recarregar:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Função para sincronização manual
+  const sincronizarManualmente = async () => {
+    if (!user) {
+      alert('⚠️ Faça login para sincronizar!');
+      return;
+    }
+    
+    console.log('🔄 Iniciando sincronização manual...');
+    setLoading(true);
+    
+    try {
+      // Primeiro, processar ações pendentes
+      console.log('📤 Processando ações pendentes...');
+      await processPendingActions();
+      
+      // Depois, recarregar dados do Firebase
+      console.log('📥 Recarregando dados do Firebase...');
+      await loadUserData(user.uid);
+      
+      setSyncMessage('✅ Sincronização concluída com sucesso!');
+      setTimeout(() => setSyncMessage(''), 3000);
+      
+    } catch (error) {
+      console.error('❌ Erro na sincronização:', error);
+      setSyncMessage('❌ Erro na sincronização: ' + error.message);
+      setTimeout(() => setSyncMessage(''), 5000);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Limpar cache local
+  const clearLocalData = () => {
+    if (!user) {
+      return;
+    }
+    
+    if (window.confirm('Limpar cache local?')) {
+      localStorage.removeItem('donana-orcamentos-backup');
+      localStorage.removeItem('donana-pedidos-backup');
+      localStorage.removeItem('donana-finalizados-backup');
+      
+      loadUserData(user.uid);
     }
   };
 
@@ -266,112 +486,23 @@ const App = () => {
     localStorage.setItem('installPromptDismissed', 'true');
   };
 
-  // Carregar dados do usuário do Firebase
-  const loadUserData = async (userId) => {
-    try {
-      setLoading(true);
-      console.log('🔄 Carregando dados do Firebase para:', userId);
-
-      // Carregar orçamentos (SEM orderBy primeiro para testar)
-      const orcamentosQuery = query(
-        collection(db, 'orcamentos'), 
-        where('userId', '==', userId)
-      );
-      const orcamentosSnapshot = await getDocs(orcamentosQuery);
-      const orcamentosData = orcamentosSnapshot.docs.map(doc => {
-        const data = doc.data();
-        console.log('📄 Orçamento encontrado:', doc.id, data);
-        return {
-          id: doc.id,
-          ...data,
-          syncedWithFirebase: true
-        };
-      });
-      
-      // Ordenar manualmente por data
-      orcamentosData.sort((a, b) => {
-        const dateA = new Date(a.data || a.createdAt?.toDate?.() || a.createdAt);
-        const dateB = new Date(b.data || b.createdAt?.toDate?.() || b.createdAt);
-        return dateB - dateA;
-      });
-      
-      setOrcamentos(orcamentosData);
-      console.log('✅ Orçamentos carregados:', orcamentosData.length);
-
-      // Carregar pedidos
-      const pedidosQuery = query(
-        collection(db, 'pedidos'), 
-        where('userId', '==', userId)
-      );
-      const pedidosSnapshot = await getDocs(pedidosQuery);
-      const pedidosData = pedidosSnapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data,
-          syncedWithFirebase: true
-        };
-      });
-      
-      // Ordenar por data de entrega
-      pedidosData.sort((a, b) => new Date(a.dataEntrega) - new Date(b.dataEntrega));
-      
-      setPedidos(pedidosData);
-      console.log('✅ Pedidos carregados:', pedidosData.length);
-
-      // Carregar finalizados
-      const finalizadosQuery = query(
-        collection(db, 'finalizados'), 
-        where('userId', '==', userId)
-      );
-      const finalizadosSnapshot = await getDocs(finalizadosQuery);
-      const finalizadosData = finalizadosSnapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data,
-          syncedWithFirebase: true
-        };
-      });
-      
-      // Ordenar por data de finalização
-      finalizadosData.sort((a, b) => {
-        const dateA = new Date(a.dataFinalizacao);
-        const dateB = new Date(b.dataFinalizacao);
-        return dateB - dateA;
-      });
-      
-      setFinalizados(finalizadosData);
-      console.log('✅ Finalizados carregados:', finalizadosData.length);
-
-      // Fazer backup local após carregar do Firebase
-      localStorage.setItem('donana-orcamentos-backup', JSON.stringify(orcamentosData));
-      localStorage.setItem('donana-pedidos-backup', JSON.stringify(pedidosData));
-      localStorage.setItem('donana-finalizados-backup', JSON.stringify(finalizadosData));
-
-      console.log('🎉 Todos os dados carregados com sucesso!');
-
-    } catch (error) {
-      console.error('❌ Erro ao carregar dados do Firebase:', error);
-      console.log('🔄 Tentando carregar backup local...');
-      // Em caso de erro, tentar carregar backup local
-      loadLocalBackup();
-    } finally {
-      setLoading(false);
-    }
-  };
-
   // Funções de autenticação
   const handleAuth = async (email, password) => {
+    console.log('🔐 Tentando autenticação:', { email, authMode });
     setAuthLoading(true);
     try {
       if (authMode === 'login') {
+        console.log('🔑 Fazendo login...');
         await signInWithEmailAndPassword(auth, email, password);
+        console.log('✅ Login realizado com sucesso');
       } else {
+        console.log('📝 Criando nova conta...');
         await createUserWithEmailAndPassword(auth, email, password);
+        console.log('✅ Conta criada com sucesso');
       }
       setShowAuth(false);
     } catch (error) {
+      console.error('❌ Erro na autenticação:', error);
       alert('Erro na autenticação: ' + error.message);
     }
     setAuthLoading(false);
@@ -429,53 +560,76 @@ const App = () => {
     setQuantidade('');
   };
 
-  // Salvar orçamento - FOCO NO FIREBASE
+  // Salvar orçamento (adaptado para offline)
   const saveOrcamento = async () => {
-    if (carrinho.length === 0) return;
+    console.log('🔍 Debug saveOrcamento:', { 
+      carrinhoLength: carrinho.length, 
+      user: user?.email, 
+      isOnline, 
+      db: !!db 
+    });
     
-    // Verificar se está logado
+    if (carrinho.length === 0) {
+      console.log('❌ Carrinho vazio');
+      return;
+    }
+    
     if (!user) {
-      alert('⚠️ Faça login para salvar orçamentos na nuvem!');
+      console.log('❌ Usuário não logado');
+      alert('⚠️ Faça login para salvar orçamentos!');
       setShowAuth(true);
       return;
     }
-
+    
+    const agora = new Date();
+    const novoOrcamento = {
+      cliente: nomeCliente.trim() || '',
+      data: agora.toISOString(),
+      itens: carrinho.map(item => ({
+        produto: {
+          id: item.produto.id,
+          nome: item.produto.nome,
+          preco: item.produto.preco,
+          categoria: item.produto.categoria
+        },
+        quantidade: item.quantidade,
+        total: item.total
+      })),
+      total: carrinho.reduce((sum, item) => sum + item.total, 0),
+      userId: user.uid,
+      createdAt: agora
+    };
+    
+    console.log('📝 Tentando salvar orçamento:', novoOrcamento);
+    
     try {
       setAuthLoading(true);
-      console.log('💾 Salvando orçamento no Firebase...');
-      
-      const agora = new Date();
-      const novoOrcamento = {
-        cliente: nomeCliente.trim() || '',
-        data: agora.toISOString(),
-        itens: [...carrinho],
-        total: carrinho.reduce((sum, item) => sum + item.total, 0),
-        userId: user.uid,
-        createdAt: agora // Usar Date normal ao invés de Timestamp
-      };
-
-      // SALVAR NO FIREBASE
-      const docRef = await addDoc(collection(db, 'orcamentos'), novoOrcamento);
-      console.log('✅ Orçamento salvo no Firebase:', docRef.id);
-      
+      if (isOnline) {
+        console.log('🌐 Salvando online...');
+        const docRef = await addDoc(collection(db, 'orcamentos'), novoOrcamento);
+        console.log('✅ Orçamento salvo no Firebase:', docRef.id);
+        await loadUserData(user.uid);
+        setCurrentScreen('home');
+        alert('✅ Orçamento salvo com sucesso!');
+      } else {
+        console.log('📱 Salvando offline...');
+        addPendingAction({ type: 'orcamento', data: novoOrcamento });
+        setSyncMessage('Orçamento salvo localmente. Será sincronizado quando estiver online.');
+        setTimeout(() => setSyncMessage(''), 3000);
+        setCurrentScreen('home');
+      }
       clearCarrinho();
       setNomeCliente('');
       setShowClienteInput(false);
-      
-      // FORÇAR RECARREGAMENTO DOS DADOS
-      await loadUserData(user.uid);
-      
-      setCurrentScreen('home');
-      alert('✅ Orçamento salvo com sucesso!');
-
     } catch (error) {
-      console.error('❌ Erro ao salvar no Firebase:', error);
-      alert('❌ Erro ao salvar orçamento. Verifique sua conexão e tente novamente.');
+      console.error('❌ Erro ao salvar orçamento:', error);
+      alert('❌ Erro ao salvar orçamento: ' + error.message);
     } finally {
       setAuthLoading(false);
     }
   };
 
+  // Editar cliente
   const saveClienteEdit = async (orcamentoId, novoNome) => {
     try {
       await updateDoc(doc(db, 'orcamentos', orcamentoId), {
@@ -527,105 +681,77 @@ const App = () => {
     }
   };
 
+  // Confirmar orçamento (adaptado para offline)
   const confirmarOrcamento = async (orcamento) => {
     if (!dataEntrega || !valorSinal) return;
     if (!user) {
       alert('Faça login para confirmar pedidos!');
       return;
     }
-
+    const sinalNumerico = parseFloat(valorSinal.replace(',', '.')) || 0;
+    const novoPedido = {
+      ...orcamento,
+      dataEntrega: new Date(dataEntrega).toISOString(),
+      sinal: sinalNumerico,
+      restante: orcamento.total - sinalNumerico,
+      temaFesta: temaFesta.trim() || '',
+      userId: user.uid,
+      createdAt: new Date()
+    };
+    delete novoPedido.id;
+    delete novoPedido.syncedWithFirebase;
     try {
-      console.log('🔄 Confirmando orçamento...');
-      const sinalNumerico = parseFloat(valorSinal.replace(',', '.')) || 0;
-      
-      const novoPedido = {
-        ...orcamento,
-        dataEntrega: new Date(dataEntrega).toISOString(),
-        sinal: sinalNumerico,
-        restante: orcamento.total - sinalNumerico,
-        temaFesta: temaFesta.trim() || '',
-        userId: user.uid,
-        createdAt: new Date()
-      };
-
-      // Remover campos desnecessários
-      delete novoPedido.id;
-      delete novoPedido.syncedWithFirebase;
-
-      // SALVAR NO FIREBASE
-      const docRef = await addDoc(collection(db, 'pedidos'), novoPedido);
-      
-      // REMOVER DO FIREBASE (orçamentos)
-      if (orcamento.syncedWithFirebase) {
-        await deleteDoc(doc(db, 'orcamentos', orcamento.id));
+      if (isOnline) {
+        const docRef = await addDoc(collection(db, 'pedidos'), novoPedido);
+        if (orcamento.syncedWithFirebase) {
+          await deleteDoc(doc(db, 'orcamentos', orcamento.id));
+        }
+        await loadUserData(user.uid);
+      } else {
+        addPendingAction({ type: 'pedido', data: novoPedido });
+        setSyncMessage('Pedido salvo localmente. Será sincronizado quando estiver online.');
+        setTimeout(() => setSyncMessage(''), 3000);
       }
-      
-      // Atualizar estados locais
-      const pedidoSalvo = { id: docRef.id, ...novoPedido, syncedWithFirebase: true };
-      setPedidos([pedidoSalvo, ...pedidos]);
-      setOrcamentos(orcamentos.filter(o => o.id !== orcamento.id));
-      
-      // Backup local
-      localStorage.setItem('donana-pedidos-backup', JSON.stringify([pedidoSalvo, ...pedidos]));
-      localStorage.setItem('donana-orcamentos-backup', JSON.stringify(orcamentos.filter(o => o.id !== orcamento.id)));
-      
       setDataEntrega('');
       setValorSinal('');
       setTemaFesta('');
       setShowDataEntrega(false);
-      
-      console.log('✅ Orçamento confirmado no Firebase');
-
     } catch (error) {
-      console.error('❌ Erro ao confirmar orçamento:', error);
-      alert('Erro ao confirmar orçamento. Verifique sua conexão.');
+      alert('Erro ao confirmar orçamento: ' + error.message);
     }
   };
 
+  // Finalizar pedido (adaptado para offline)
   const finalizarPedido = async (pedido) => {
     if (!user) {
       alert('Faça login para finalizar pedidos!');
       return;
     }
-
+    const pedidoFinalizado = {
+      ...pedido,
+      dataFinalizacao: new Date().toISOString(),
+      userId: user.uid
+    };
+    delete pedidoFinalizado.id;
+    delete pedidoFinalizado.syncedWithFirebase;
     try {
-      console.log('🔄 Finalizando pedido...');
-      
-      const pedidoFinalizado = {
-        ...pedido,
-        dataFinalizacao: new Date().toISOString(),
-        userId: user.uid
-      };
-
-      // Remover campos desnecessários
-      delete pedidoFinalizado.id;
-      delete pedidoFinalizado.syncedWithFirebase;
-
-      // SALVAR NO FIREBASE
-      const docRef = await addDoc(collection(db, 'finalizados'), pedidoFinalizado);
-      
-      // REMOVER DO FIREBASE (pedidos)
-      if (pedido.syncedWithFirebase) {
-        await deleteDoc(doc(db, 'pedidos', pedido.id));
+      if (isOnline) {
+        await addDoc(collection(db, 'finalizados'), pedidoFinalizado);
+        if (pedido.syncedWithFirebase) {
+          await deleteDoc(doc(db, 'pedidos', pedido.id));
+        }
+        await loadUserData(user.uid);
+      } else {
+        addPendingAction({ type: 'finalizado', data: pedidoFinalizado });
+        setSyncMessage('Finalização salva localmente. Será sincronizada quando estiver online.');
+        setTimeout(() => setSyncMessage(''), 3000);
       }
-      
-      // Atualizar estados locais
-      const finalizadoSalvo = { id: docRef.id, ...pedidoFinalizado, syncedWithFirebase: true };
-      setFinalizados([finalizadoSalvo, ...finalizados]);
-      setPedidos(pedidos.filter(p => p.id !== pedido.id));
-      
-      // Backup local
-      localStorage.setItem('donana-finalizados-backup', JSON.stringify([finalizadoSalvo, ...finalizados]));
-      localStorage.setItem('donana-pedidos-backup', JSON.stringify(pedidos.filter(p => p.id !== pedido.id)));
-      
-      console.log('✅ Pedido finalizado no Firebase');
-      
     } catch (error) {
-      console.error('❌ Erro ao finalizar pedido:', error);
-      alert('Erro ao finalizar pedido. Verifique sua conexão.');
+      alert('Erro ao finalizar pedido: ' + error.message);
     }
   };
 
+  // Cancelar orçamento
   const cancelarOrcamento = async (orcamentoId) => {
     if (window.confirm('Tem certeza que deseja cancelar este orçamento?')) {
       if (!user) {
@@ -636,21 +762,17 @@ const App = () => {
       try {
         const orcamento = orcamentos.find(o => o.id === orcamentoId);
         
-        // REMOVER DO FIREBASE
         if (orcamento?.syncedWithFirebase) {
           await deleteDoc(doc(db, 'orcamentos', orcamentoId));
         }
         
-        // Atualizar estado local
         const novosOrcamentos = orcamentos.filter(o => o.id !== orcamentoId);
         setOrcamentos(novosOrcamentos);
         
-        // Backup local
         localStorage.setItem('donana-orcamentos-backup', JSON.stringify(novosOrcamentos));
         
-        console.log('✅ Orçamento cancelado');
       } catch (error) {
-        console.error('❌ Erro ao cancelar orçamento:', error);
+        console.error('Erro ao cancelar:', error);
         alert('Erro ao cancelar orçamento');
       }
     }
@@ -666,74 +788,17 @@ const App = () => {
       try {
         const pedido = pedidos.find(p => p.id === pedidoId);
         
-        // REMOVER DO FIREBASE
         if (pedido?.syncedWithFirebase) {
           await deleteDoc(doc(db, 'pedidos', pedidoId));
         }
         
-        // Atualizar estado local
         const novosPedidos = pedidos.filter(p => p.id !== pedidoId);
         setPedidos(novosPedidos);
         
-        // Backup local
         localStorage.setItem('donana-pedidos-backup', JSON.stringify(novosPedidos));
         
-        console.log('✅ Pedido cancelado');
       } catch (error) {
-        console.error('❌ Erro ao cancelar pedido:', error);
-        alert('Erro ao cancelar pedido');
-      }
-    }
-  };setShowDataEntrega(false);
-
-    } catch (error) {
-      console.error('Erro ao confirmar orçamento:', error);
-      alert('Erro ao confirmar orçamento');
-    }
-  };
-
-  const cancelarOrcamento = async (orcamentoId) => {
-    if (window.confirm('Tem certeza que deseja cancelar este orçamento?')) {
-      try {
-        await deleteDoc(doc(db, 'orcamentos', orcamentoId));
-        setOrcamentos(orcamentos.filter(o => o.id !== orcamentoId));
-      } catch (error) {
-        console.error('Erro ao cancelar orçamento:', error);
-        alert('Erro ao cancelar orçamento');
-      }
-    }
-  };
-
-  const finalizarPedido = async (pedido) => {
-    try {
-      const pedidoFinalizado = {
-        ...pedido,
-        dataFinalizacao: new Date().toISOString(),
-        userId: user.uid
-      };
-
-      // Remover campos desnecessários
-      delete pedidoFinalizado.id;
-
-      await addDoc(collection(db, 'finalizados'), pedidoFinalizado);
-      await deleteDoc(doc(db, 'pedidos', pedido.id));
-      
-      setFinalizados([pedidoFinalizado, ...finalizados]);
-      setPedidos(pedidos.filter(p => p.id !== pedido.id));
-      
-    } catch (error) {
-      console.error('Erro ao finalizar pedido:', error);
-      alert('Erro ao finalizar pedido');
-    }
-  };
-
-  const cancelarPedido = async (pedidoId) => {
-    if (window.confirm('Tem certeza que deseja cancelar este pedido?')) {
-      try {
-        await deleteDoc(doc(db, 'pedidos', pedidoId));
-        setPedidos(pedidos.filter(p => p.id !== pedidoId));
-      } catch (error) {
-        console.error('Erro ao cancelar pedido:', error);
+        console.error('Erro ao cancelar:', error);
         alert('Erro ao cancelar pedido');
       }
     }
@@ -763,22 +828,23 @@ const App = () => {
     setEditingProductPrice(null);
   };
 
+  // Adicionar produto (adaptado para offline, apenas local)
   const addNewProduct = () => {
     if (newProduct.nome.trim() && newProduct.preco && parseFloat(newProduct.preco) > 0) {
       const categoria = newProduct.categoria === 'NOVA_CATEGORIA' ? 
         (newProduct.novaCategoria || 'DIVERSOS').toUpperCase() : 
         newProduct.categoria;
-        
       const novoProduto = {
         id: Math.max(...produtos.map(p => p.id)) + 1,
         nome: newProduct.nome.trim(),
         preco: parseFloat(newProduct.preco.replace(',', '.')),
         categoria: categoria
       };
-      
       setProdutos([...produtos, novoProduto]);
       setNewProduct({ nome: '', preco: '', categoria: 'DIVERSOS' });
       setShowAddProduct(false);
+      // Se quiser sincronizar produtos com nuvem, pode adicionar na fila também
+      // addPendingAction({ type: 'produto', data: novoProduto });
     }
   };
 
@@ -877,7 +943,6 @@ const App = () => {
     return (
       <div className="min-h-screen bg-pink-50 p-4">
         <div className="max-w-md mx-auto">
-          {/* Header com user info */}
           <div className="flex justify-between items-center mb-6">
             <h1 className="text-3xl font-bold text-pink-800">APP DONANA</h1>
             {user ? (
@@ -946,54 +1011,40 @@ const App = () => {
               </div>
             </div>
           )}
-          
-          {/* Status de conexão */}
-          <div className={`border px-3 py-2 rounded mb-4 text-center text-sm flex items-center justify-center gap-2 ${
-            isOnline 
-              ? 'bg-green-100 border-green-400 text-green-700' 
-              : 'bg-red-100 border-red-400 text-red-700'
-          }`}>
-            {isOnline ? <Wifi size={16} /> : <WifiOff size={16} />}
-            {isOnline ? '🌐 Online - Firebase conectado' : '📱 Offline - Dados locais'}
-          </div>
 
-          {/* Indicador de dados */}
-          <div className="bg-blue-100 border border-blue-400 text-blue-700 px-3 py-2 rounded mb-4 text-center text-sm">
-            {isAppInstalled ? '📱 App Instalado' : '🌐 Versão Web'} • 
+          {/* Contador de dados */}
+          <div className="bg-blue-100 border border-blue-400 text-blue-700 px-3 py-2 rounded mb-6 text-center text-sm">
+            📊 {orcamentos.length} orçamentos • {pedidos.length} pedidos • {finalizados.length} finalizados
             {user ? (
-              <span>
-                {isOnline ? ' ☁️ Conectado ao Firebase' : ' 📡 Aguardando conexão'}
-                <br />
-                📊 {orcamentos.length} orçamentos • {pedidos.length} pedidos • {finalizados.length} finalizados
-                <br />
-                <button 
-                  onClick={forceReloadData}
-                  className="text-xs bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded mt-1 mr-2"
-                >
-                  🔄 Recarregar
-                </button>
-                <button 
-                  onClick={clearLocalData}
-                  className="text-xs bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded mt-1"
-                >
-                  🗑️ Limpar Cache
-                </button>
-              </span>
+              <div className="mt-2">
+                <div className="mt-2 flex justify-center">
+                  <button 
+                    onClick={sincronizarManualmente}
+                    disabled={loading}
+                    className="text-xs bg-purple-500 hover:bg-purple-600 disabled:bg-gray-400 text-white px-3 py-1 rounded flex items-center gap-1"
+                  >
+                    {loading ? '⏳' : '🔄'} Sincronizar Manualmente
+                  </button>
+                </div>
+              </div>
             ) : (
-              <span>
-                🔒 Faça login para salvar na nuvem
-                <br />
-                📱 Dados temporários: {orcamentos.length} orçamentos • {pedidos.length} pedidos • {finalizados.length} finalizados
-              </span>
+              <div className="mt-2">
+                🔒 <strong>Faça login</strong> para acessar dados compartilhados da equipe
+              </div>
             )}
           </div>
 
-          {/* Novidades */}
-          <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-3 py-2 rounded mb-4 text-center text-sm">
-            ✨ <strong>Versão PWA 2.0:</strong> 
-            <br />
-            📱 App instalável • ☁️ Sync automática • 🔄 Cache offline • 🚀 Performance otimizada
-          </div>
+          {/* Adicionar aviso visual de sincronização pendente/concluída na tela home */}
+          {pendingSync && (
+            <div className="bg-yellow-200 border border-yellow-400 text-yellow-800 px-3 py-2 rounded mb-2 text-center text-sm animate-bounce-gentle">
+              ⚠️ Existem dados pendentes de sincronização. Eles serão enviados automaticamente quando estiver online.
+            </div>
+          )}
+          {syncMessage && (
+            <div className="bg-green-200 border border-green-400 text-green-800 px-3 py-2 rounded mb-2 text-center text-sm animate-fade-in">
+              {syncMessage}
+            </div>
+          )}
 
           <div className="flex flex-col gap-4">
             {[
@@ -1147,11 +1198,9 @@ const App = () => {
       <div className="min-h-screen bg-pink-50 p-4">
         <div className="max-w-md mx-auto">
           <h2 className="text-2xl font-bold text-pink-800 mb-6">Orçamentos Pendentes</h2>
-          
           {orcamentos.length === 0 ? (
             <div className="text-center text-gray-500 mt-8">
-              Nenhum orçamento pendente
-              <br />
+              Nenhum orçamento pendente<br />
               <span className="text-sm">Crie um orçamento primeiro!</span>
             </div>
           ) : (
@@ -1165,9 +1214,7 @@ const App = () => {
                           type="text"
                           defaultValue={orcamento.cliente}
                           onKeyPress={(e) => {
-                            if (e.key === 'Enter') {
-                              saveClienteEdit(orcamento.id, e.target.value);
-                            }
+                            if (e.key === 'Enter') saveClienteEdit(orcamento.id, e.target.value);
                           }}
                           onBlur={(e) => saveClienteEdit(orcamento.id, e.target.value)}
                           className="w-full p-2 text-lg font-bold border border-gray-300 rounded-md"
@@ -1181,20 +1228,15 @@ const App = () => {
                         onClick={() => setEditingCliente(orcamento.id)}
                       >
                         {orcamento.cliente || (
-                          <span className="text-gray-400 italic">
-                            📝 Clique para adicionar nome
-                          </span>
+                          <span className="text-gray-400 italic">📝 Clique para adicionar nome</span>
                         )}
                         <Edit3 size={14} className="text-gray-400" />
                       </div>
                     )}
                     <div className="text-sm text-gray-600">{formatDate(orcamento.data)}</div>
                   </div>
-                  <div className="text-lg font-bold text-green-600">
-                    {formatCurrency(orcamento.total)}
-                  </div>
+                  <div className="text-lg font-bold text-green-600">{formatCurrency(orcamento.total)}</div>
                 </div>
-                
                 <div className="border-t pt-2 mt-2">
                   {orcamento.itens.map((item, index) => (
                     <div key={index} className="flex justify-between text-sm mb-1">
@@ -1203,7 +1245,6 @@ const App = () => {
                     </div>
                   ))}
                 </div>
-
                 {showDataEntrega === orcamento.id ? (
                   <div className="mt-4 p-3 bg-gray-50 rounded">
                     <label className="block text-sm font-medium text-gray-700 mb-2">Data de Entrega</label>
@@ -1213,10 +1254,7 @@ const App = () => {
                       onChange={(e) => setDataEntrega(e.target.value)}
                       className="w-full p-2 border border-gray-300 rounded-md mb-3"
                     />
-                    
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Tema da Festa <span className="text-gray-400">(opcional)</span>
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Tema da Festa <span className="text-gray-400">(opcional)</span></label>
                     <input
                       type="text"
                       value={temaFesta}
@@ -1224,7 +1262,6 @@ const App = () => {
                       className="w-full p-2 border border-gray-300 rounded-md mb-3"
                       placeholder="Ex: Frozen, Homem-Aranha..."
                     />
-                    
                     <label className="block text-sm font-medium text-gray-700 mb-2">Valor do Sinal</label>
                     <input
                       type="number"
@@ -1234,20 +1271,15 @@ const App = () => {
                       className="w-full p-2 border border-gray-300 rounded-md mb-3"
                       placeholder="0,00"
                     />
-                    
                     <div className="flex gap-2">
                       <button
                         onClick={() => confirmarOrcamento(orcamento)}
                         className="flex-1 bg-green-500 hover:bg-green-600 text-white py-2 px-4 rounded-md"
-                      >
-                        Confirmar
-                      </button>
+                      >Confirmar</button>
                       <button
                         onClick={() => setShowDataEntrega(false)}
                         className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded-md"
-                      >
-                        Cancelar
-                      </button>
+                      >Cancelar</button>
                     </div>
                   </div>
                 ) : (
@@ -1255,21 +1287,16 @@ const App = () => {
                     <button
                       onClick={() => setShowDataEntrega(orcamento.id)}
                       className="flex-1 bg-green-500 hover:bg-green-600 text-white py-2 px-4 rounded-md flex items-center justify-center gap-2"
-                    >
-                      <Check size={16} /> Confirmar
-                    </button>
+                    ><Check size={16} /> Confirmar</button>
                     <button
                       onClick={() => cancelarOrcamento(orcamento.id)}
                       className="flex-1 bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded-md flex items-center justify-center gap-2"
-                    >
-                      <X size={16} /> Cancelar
-                    </button>
+                    ><X size={16} /> Cancelar</button>
                   </div>
                 )}
               </div>
             ))
           )}
-
           <button
             onClick={() => setCurrentScreen('home')}
             className="fixed bottom-4 left-4 bg-gray-500 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg"
@@ -1284,16 +1311,13 @@ const App = () => {
   // Tela Pedidos
   if (currentScreen === 'pedidos') {
     const pedidosOrdenados = [...pedidos].sort((a, b) => new Date(a.dataEntrega) - new Date(b.dataEntrega));
-
     return (
       <div className="min-h-screen bg-pink-50 p-4">
         <div className="max-w-md mx-auto">
           <h2 className="text-2xl font-bold text-pink-800 mb-6">Pedidos Confirmados</h2>
-          
           {pedidosOrdenados.length === 0 ? (
             <div className="text-center text-gray-500 mt-8">
-              Nenhum pedido confirmado
-              <br />
+              Nenhum pedido confirmado<br />
               <span className="text-sm">Confirme um orçamento primeiro!</span>
             </div>
           ) : (
@@ -1307,9 +1331,7 @@ const App = () => {
                           type="text"
                           defaultValue={pedido.cliente}
                           onKeyPress={(e) => {
-                            if (e.key === 'Enter') {
-                              savePedidoClienteEdit(pedido.id, e.target.value);
-                            }
+                            if (e.key === 'Enter') savePedidoClienteEdit(pedido.id, e.target.value);
                           }}
                           onBlur={(e) => savePedidoClienteEdit(pedido.id, e.target.value)}
                           className="w-full p-2 text-lg font-bold border border-gray-300 rounded-md"
@@ -1323,28 +1345,20 @@ const App = () => {
                         onClick={() => setEditingCliente(pedido.id)}
                       >
                         {pedido.cliente || (
-                          <span className="text-gray-400 italic">
-                            📝 Clique para adicionar nome
-                          </span>
+                          <span className="text-gray-400 italic">📝 Clique para adicionar nome</span>
                         )}
                         <Edit3 size={14} className="text-gray-400" />
                       </div>
                     )}
-                    
                     <div className="text-sm text-gray-600">Orçamento: {formatDate(pedido.data)}</div>
-                    <div className="text-sm font-medium text-blue-600">
-                      Entrega: {formatDate(pedido.dataEntrega)}
-                    </div>
-                    
+                    <div className="text-sm font-medium text-blue-600">Entrega: {formatDate(pedido.dataEntrega)}</div>
                     {editingTema === pedido.id ? (
                       <div className="mt-2">
                         <input
                           type="text"
                           defaultValue={pedido.temaFesta}
                           onKeyPress={(e) => {
-                            if (e.key === 'Enter') {
-                              savePedidoTemaEdit(pedido.id, e.target.value);
-                            }
+                            if (e.key === 'Enter') savePedidoTemaEdit(pedido.id, e.target.value);
                           }}
                           onBlur={(e) => savePedidoTemaEdit(pedido.id, e.target.value)}
                           className="w-full p-2 text-sm border border-gray-300 rounded-md"
@@ -1360,32 +1374,22 @@ const App = () => {
                         {pedido.temaFesta ? (
                           <>🎉 Tema: {pedido.temaFesta}</>
                         ) : (
-                          <span className="text-gray-400 italic">
-                            🎉 Clique para adicionar tema
-                          </span>
+                          <span className="text-gray-400 italic">🎉 Clique para adicionar tema</span>
                         )}
                         <Edit3 size={12} className="text-gray-400" />
                       </div>
                     )}
-                    
                     {pedido.sinal > 0 && (
-                      <div className="text-sm text-gray-600">
-                        Sinal: {formatCurrency(pedido.sinal)}
-                      </div>
+                      <div className="text-sm text-gray-600">Sinal: {formatCurrency(pedido.sinal)}</div>
                     )}
                   </div>
                   <div className="text-right">
-                    <div className="text-lg font-bold text-green-600">
-                      {formatCurrency(pedido.total)}
-                    </div>
+                    <div className="text-lg font-bold text-green-600">{formatCurrency(pedido.total)}</div>
                     {pedido.sinal > 0 && (
-                      <div className="text-sm font-medium text-orange-600">
-                        Restante: {formatCurrency(pedido.restante)}
-                      </div>
+                      <div className="text-sm font-medium text-orange-600">Restante: {formatCurrency(pedido.restante)}</div>
                     )}
                   </div>
                 </div>
-                
                 <div className="border-t pt-2 mt-2">
                   {pedido.itens.map((item, index) => (
                     <div key={index} className="flex justify-between text-sm mb-1">
@@ -1394,25 +1398,19 @@ const App = () => {
                     </div>
                   ))}
                 </div>
-
                 <div className="flex gap-2 mt-4">
                   <button
                     onClick={() => finalizarPedido(pedido)}
                     className="flex-1 bg-green-500 hover:bg-green-600 text-white py-2 px-4 rounded-md flex items-center justify-center gap-2"
-                  >
-                    <Check size={16} /> Finalizar
-                  </button>
+                  ><Check size={16} /> Finalizar</button>
                   <button
                     onClick={() => cancelarPedido(pedido.id)}
                     className="flex-1 bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded-md flex items-center justify-center gap-2"
-                  >
-                    <X size={16} /> Cancelar
-                  </button>
+                  ><X size={16} /> Cancelar</button>
                 </div>
               </div>
             ))
           )}
-
           <button
             onClick={() => setCurrentScreen('home')}
             className="fixed bottom-4 left-4 bg-gray-500 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg"
@@ -1428,13 +1426,10 @@ const App = () => {
   if (currentScreen === 'finalizados') {
     const totalFinalizados = finalizados.reduce((sum, pedido) => sum + pedido.total, 0);
     const mediaTicket = finalizados.length > 0 ? totalFinalizados / finalizados.length : 0;
-
     return (
       <div className="min-h-screen bg-pink-50 p-4">
         <div className="max-w-md mx-auto">
           <h2 className="text-2xl font-bold text-pink-800 mb-6">Pedidos Finalizados</h2>
-          
-          {/* Dashboard Financeiro */}
           <div className="bg-white p-4 rounded-lg shadow mb-4">
             <h3 className="font-bold text-lg mb-4 text-center">💰 Dashboard Financeiro</h3>
             <div className="grid grid-cols-2 gap-4">
@@ -1452,11 +1447,9 @@ const App = () => {
               </div>
             </div>
           </div>
-
           {finalizados.length === 0 ? (
             <div className="text-center text-gray-500 mt-8">
-              Nenhum pedido finalizado ainda
-              <br />
+              Nenhum pedido finalizado ainda<br />
               <span className="text-sm">Finalize alguns pedidos para ver o dashboard!</span>
             </div>
           ) : (
@@ -1476,7 +1469,6 @@ const App = () => {
                     <div className="text-xs text-green-500">✅ PAGO</div>
                   </div>
                 </div>
-                
                 <div className="border-t pt-2 mt-2">
                   {pedido.itens.slice(0, 3).map((item, index) => (
                     <div key={index} className="flex justify-between text-sm mb-1">
@@ -1493,7 +1485,100 @@ const App = () => {
               </div>
             ))
           )}
+          <button
+            onClick={() => setCurrentScreen('home')}
+            className="fixed bottom-4 left-4 bg-gray-500 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg"
+          >
+            <ChevronLeft size={24} />
+          </button>
+        </div>
+      </div>
+    );
+  }
 
+  // Tela Relatórios
+  if (currentScreen === 'relatorios') {
+    const totalVendas = finalizados.reduce((sum, pedido) => sum + pedido.total, 0);
+    const pedidosHoje = pedidos.filter(p => {
+      const hoje = new Date().toDateString();
+      const dataEntrega = new Date(p.dataEntrega).toDateString();
+      return dataEntrega === hoje;
+    });
+    const totalEntregasHoje = pedidosHoje.reduce((sum, pedido) => sum + pedido.total, 0);
+    const totalPedidosAtivos = pedidos.reduce((sum, pedido) => sum + pedido.total, 0);
+    const totalOrcamentos = orcamentos.reduce((sum, orcamento) => sum + orcamento.total, 0);
+    const produtosMaisVendidos = {};
+    finalizados.forEach(pedido => {
+      pedido.itens.forEach(item => {
+        if (produtosMaisVendidos[item.produto.nome]) {
+          produtosMaisVendidos[item.produto.nome] += item.quantidade;
+        } else {
+          produtosMaisVendidos[item.produto.nome] = item.quantidade;
+        }
+      });
+    });
+    const topProdutos = Object.entries(produtosMaisVendidos)
+      .sort(([,a], [,b]) => b - a)
+      .slice(0, 5);
+    return (
+      <div className="min-h-screen bg-pink-50 p-4">
+        <div className="max-w-md mx-auto">
+          <h2 className="text-2xl font-bold text-pink-800 mb-6">Relatórios</h2>
+          <div className="grid grid-cols-2 gap-4 mb-6">
+            <div className="bg-green-100 p-4 rounded-lg text-center">
+              <div className="text-2xl font-bold text-green-600">{formatCurrency(totalVendas)}</div>
+              <div className="text-sm text-green-700">Total Vendido</div>
+              <div className="text-xs text-green-600">{finalizados.length} pedidos</div>
+            </div>
+            <div className="bg-blue-100 p-4 rounded-lg text-center">
+              <div className="text-2xl font-bold text-blue-600">{formatCurrency(totalEntregasHoje)}</div>
+              <div className="text-sm text-blue-700">Entregas Hoje</div>
+              <div className="text-xs text-blue-600">{pedidosHoje.length} pedidos</div>
+            </div>
+            <div className="bg-purple-100 p-4 rounded-lg text-center">
+              <div className="text-2xl font-bold text-purple-600">{formatCurrency(totalPedidosAtivos)}</div>
+              <div className="text-sm text-purple-700">Pedidos Ativos</div>
+              <div className="text-xs text-purple-600">{pedidos.length} pedidos</div>
+            </div>
+            <div className="bg-orange-100 p-4 rounded-lg text-center">
+              <div className="text-2xl font-bold text-orange-600">{formatCurrency(totalOrcamentos)}</div>
+              <div className="text-sm text-orange-700">Orçamentos</div>
+              <div className="text-xs text-orange-600">{orcamentos.length} pendentes</div>
+            </div>
+          </div>
+          <div className="bg-white p-4 rounded-lg shadow mb-4">
+            <h3 className="font-bold text-lg mb-4">🏆 Top 5 Produtos</h3>
+            {topProdutos.length === 0 ? (
+              <div className="text-center text-gray-500">Nenhuma venda registrada ainda</div>
+            ) : (
+              topProdutos.map(([produto, quantidade], index) => (
+                <div key={produto} className="flex justify-between items-center mb-2 p-2 bg-gray-50 rounded">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg font-bold text-purple-600">#{index + 1}</span>
+                    <span className="text-sm">{produto}</span>
+                  </div>
+                  <span className="font-bold text-green-600">{quantidade}x</span>
+                </div>
+              ))
+            )}
+          </div>
+          {pedidosHoje.length > 0 && (
+            <div className="bg-white p-4 rounded-lg shadow mb-4">
+              <h3 className="font-bold text-lg mb-4">📅 Entregas de Hoje</h3>
+              {pedidosHoje.map(pedido => (
+                <div key={pedido.id} className="border-l-4 border-blue-500 pl-3 mb-3 bg-blue-50 p-2 rounded">
+                  <div className="font-medium">{pedido.cliente || 'Cliente não informado'}</div>
+                  <div className="text-sm text-gray-600">{formatCurrency(pedido.total)}</div>
+                  {pedido.temaFesta && (
+                    <div className="text-sm text-purple-600">🎉 {pedido.temaFesta}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded text-center">
+            📊 <strong>Em breve:</strong> Gráficos detalhados, análise por período e muito mais!
+          </div>
           <button
             onClick={() => setCurrentScreen('home')}
             className="fixed bottom-4 left-4 bg-gray-500 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg"
@@ -1508,7 +1593,6 @@ const App = () => {
   // Tela Produtos
   if (currentScreen === 'produtos') {
     const categorias = [...new Set(produtos.map(p => p.categoria))];
-
     return (
       <div className="min-h-screen bg-pink-50 p-4">
         <div className="max-w-md mx-auto">
@@ -1531,12 +1615,9 @@ const App = () => {
               </button>
             </div>
           </div>
-
-          {/* Formulário para adicionar produto */}
           {showAddProduct && (
             <div className="bg-white p-4 rounded-lg shadow mb-4">
               <h3 className="font-bold text-lg mb-4">➕ Adicionar Produto</h3>
-              
               <div className="mb-3">
                 <label className="block text-sm font-medium text-gray-700 mb-2">Nome do Produto</label>
                 <input
@@ -1547,7 +1628,6 @@ const App = () => {
                   placeholder="Nome do produto"
                 />
               </div>
-
               <div className="mb-3">
                 <label className="block text-sm font-medium text-gray-700 mb-2">Preço</label>
                 <input
@@ -1559,7 +1639,6 @@ const App = () => {
                   placeholder="0,00"
                 />
               </div>
-
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-2">Categoria</label>
                 {newProduct.categoria === 'NOVA_CATEGORIA' ? (
@@ -1584,46 +1663,34 @@ const App = () => {
                   </select>
                 )}
               </div>
-
               <div className="flex gap-2">
                 <button
                   onClick={addNewProduct}
                   className="flex-1 bg-green-500 hover:bg-green-600 text-white py-2 px-4 rounded-md"
-                >
-                  Adicionar
-                </button>
+                >Adicionar</button>
                 <button
                   onClick={() => setShowAddProduct(false)}
                   className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded-md"
-                >
-                  Cancelar
-                </button>
+                >Cancelar</button>
               </div>
             </div>
           )}
-          
           {categorias.map(categoria => (
             <div key={categoria} className="mb-6">
               <h3 className="font-bold text-lg text-pink-700 mb-3 bg-pink-100 p-2 rounded flex justify-between items-center">
                 <span>{categoria}</span>
-                <span className="text-sm font-normal">
-                  {produtos.filter(p => p.categoria === categoria).length} itens
-                </span>
+                <span className="text-sm font-normal">{produtos.filter(p => p.categoria === categoria).length} itens</span>
               </h3>
-              
               {produtos.filter(p => p.categoria === categoria).map(produto => (
                 <div key={produto.id} className="bg-white p-3 rounded-lg shadow mb-2">
                   <div className="flex justify-between items-start">
                     <div className="flex-1 mr-2">
-                      {/* Nome do produto editável */}
                       {editingProductName === produto.id ? (
                         <input
                           type="text"
                           defaultValue={produto.nome}
                           onKeyPress={(e) => {
-                            if (e.key === 'Enter') {
-                              saveProductNameEdit(produto.id, e.target.value);
-                            }
+                            if (e.key === 'Enter') saveProductNameEdit(produto.id, e.target.value);
                           }}
                           onBlur={(e) => saveProductNameEdit(produto.id, e.target.value)}
                           className="w-full p-1 text-sm font-medium border border-gray-300 rounded"
@@ -1638,21 +1705,16 @@ const App = () => {
                           <Edit3 size={12} className="text-gray-400" />
                         </div>
                       )}
-                      
                       <div className="text-sm text-gray-600">#{produto.id}</div>
                     </div>
-                    
                     <div className="text-right">
-                      {/* Preço editável */}
                       {editingProductPrice === produto.id ? (
                         <input
                           type="number"
                           step="0.01"
                           defaultValue={produto.preco}
                           onKeyPress={(e) => {
-                            if (e.key === 'Enter') {
-                              saveProductPriceEdit(produto.id, e.target.value);
-                            }
+                            if (e.key === 'Enter') saveProductPriceEdit(produto.id, e.target.value);
                           }}
                           onBlur={(e) => saveProductPriceEdit(produto.id, e.target.value)}
                           className="w-20 p-1 text-sm font-bold text-right border border-gray-300 rounded"
@@ -1667,8 +1729,6 @@ const App = () => {
                           <Edit3 size={12} className="text-gray-400" />
                         </div>
                       )}
-                      
-                      {/* Botão de excluir */}
                       <button
                         onClick={() => deleteProduct(produto.id)}
                         className="text-red-500 hover:text-red-700 text-xs mt-1"
@@ -1681,15 +1741,11 @@ const App = () => {
               ))}
             </div>
           ))}
-
           <div className="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded mb-4 text-center">
-            📝 <strong>Total:</strong> {produtos.length} produtos cadastrados
-            <br />
-            💡 <strong>Dica:</strong> Clique nos nomes e preços para editar!
-            <br />
+            📝 <strong>Total:</strong> {produtos.length} produtos cadastrados<br />
+            💡 <strong>Dica:</strong> Clique nos nomes e preços para editar!<br />
             <span className="text-sm">💾 Produtos salvos localmente no dispositivo</span>
           </div>
-
           <button
             onClick={() => setCurrentScreen('home')}
             className="fixed bottom-4 left-4 bg-gray-500 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg"
@@ -1700,142 +1756,6 @@ const App = () => {
       </div>
     );
   }
-
-  // Tela Relatórios
-  if (currentScreen === 'relatorios') {
-    const totalVendas = finalizados.reduce((sum, pedido) => sum + pedido.total, 0);
-    const pedidosHoje = pedidos.filter(p => {
-      const hoje = new Date().toDateString();
-      const dataEntrega = new Date(p.dataEntrega).toDateString();
-      return dataEntrega === hoje;
-    });
-    
-    // Calcular valores totais
-    const totalEntregasHoje = pedidosHoje.reduce((sum, pedido) => sum + pedido.total, 0);
-    const totalPedidosAtivos = pedidos.reduce((sum, pedido) => sum + pedido.total, 0);
-    const totalOrcamentos = orcamentos.reduce((sum, orcamento) => sum + orcamento.total, 0);
-
-    const produtosMaisVendidos = {};
-    finalizados.forEach(pedido => {
-      pedido.itens.forEach(item => {
-        if (produtosMaisVendidos[item.produto.nome]) {
-          produtosMaisVendidos[item.produto.nome] += item.quantidade;
-        } else {
-          produtosMaisVendidos[item.produto.nome] = item.quantidade;
-        }
-      });
-    });
-
-    const topProdutos = Object.entries(produtosMaisVendidos)
-      .sort(([,a], [,b]) => b - a)
-      .slice(0, 5);
-
-    return (
-      <div className="min-h-screen bg-pink-50 p-4">
-        <div className="max-w-md mx-auto">
-          <h2 className="text-2xl font-bold text-pink-800 mb-6">Relatórios</h2>
-          
-          {/* Cards de Resumo */}
-          <div className="grid grid-cols-2 gap-4 mb-6">
-            <div className="bg-green-100 p-4 rounded-lg text-center">
-              <div className="text-2xl font-bold text-green-600">{formatCurrency(totalVendas)}</div>
-              <div className="text-sm text-green-700">Total Vendido</div>
-              <div className="text-xs text-green-600">{finalizados.length} pedidos</div>
-            </div>
-            <div className="bg-blue-100 p-4 rounded-lg text-center">
-              <div className="text-2xl font-bold text-blue-600">{formatCurrency(totalEntregasHoje)}</div>
-              <div className="text-sm text-blue-700">Entregas Hoje</div>
-              <div className="text-xs text-blue-600">{pedidosHoje.length} pedidos</div>
-            </div>
-            <div className="bg-purple-100 p-4 rounded-lg text-center">
-              <div className="text-2xl font-bold text-purple-600">{formatCurrency(totalPedidosAtivos)}</div>
-              <div className="text-sm text-purple-700">Pedidos Ativos</div>
-              <div className="text-xs text-purple-600">{pedidos.length} pedidos</div>
-            </div>
-            <div className="bg-orange-100 p-4 rounded-lg text-center">
-              <div className="text-2xl font-bold text-orange-600">{formatCurrency(totalOrcamentos)}</div>
-              <div className="text-sm text-orange-700">Orçamentos</div>
-              <div className="text-xs text-orange-600">{orcamentos.length} pendentes</div>
-            </div>
-          </div>
-
-          {/* Produtos Mais Vendidos */}
-          <div className="bg-white p-4 rounded-lg shadow mb-4">
-            <h3 className="font-bold text-lg mb-4">🏆 Top 5 Produtos</h3>
-            {topProdutos.length === 0 ? (
-              <div className="text-center text-gray-500">
-                Nenhuma venda registrada ainda
-              </div>
-            ) : (
-              topProdutos.map(([produto, quantidade], index) => (
-                <div key={produto} className="flex justify-between items-center mb-2 p-2 bg-gray-50 rounded">
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg font-bold text-purple-600">#{index + 1}</span>
-                    <span className="text-sm">{produto}</span>
-                  </div>
-                  <span className="font-bold text-green-600">{quantidade}x</span>
-                </div>
-              ))
-            )}
-          </div>
-
-          {/* Entregas de Hoje */}
-          {pedidosHoje.length > 0 && (
-            <div className="bg-white p-4 rounded-lg shadow mb-4">
-              <h3 className="font-bold text-lg mb-4">📅 Entregas de Hoje</h3>
-              {pedidosHoje.map(pedido => (
-                <div key={pedido.id} className="border-l-4 border-blue-500 pl-3 mb-3 bg-blue-50 p-2 rounded">
-                  <div className="font-medium">{pedido.cliente || 'Cliente não informado'}</div>
-                  <div className="text-sm text-gray-600">{formatCurrency(pedido.total)}</div>
-                  {pedido.temaFesta && (
-                    <div className="text-sm text-purple-600">🎉 {pedido.temaFesta}</div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded text-center">
-            📊 <strong>Em breve:</strong> Gráficos detalhados, análise por período e muito mais!
-          </div>
-
-          <button
-            onClick={() => setCurrentScreen('home')}
-            className="fixed bottom-4 left-4 bg-gray-500 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg"
-          >
-            <ChevronLeft size={24} />
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Fallback para outras telas
-  return (
-    <div className="min-h-screen bg-pink-50 p-4">
-      <div className="max-w-md mx-auto">
-        <h2 className="text-2xl font-bold text-pink-800 mb-6">
-          Tela: {currentScreen}
-        </h2>
-        <p className="text-center text-gray-600 mb-8">
-          Esta funcionalidade será implementada em breve!
-        </p>
-        <button
-          onClick={() => setCurrentScreen('home')}
-          className="w-full bg-pink-500 hover:bg-pink-600 text-white font-bold py-3 px-4 rounded-md"
-        >
-          Voltar ao Início
-        </button>
-        
-        <button
-          onClick={() => setCurrentScreen('home')}
-          className="fixed bottom-4 left-4 bg-gray-500 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg"
-        >
-          <ChevronLeft size={24} />
-        </button>
-      </div>
-    </div>
-  );
 };
 
 export default App;
