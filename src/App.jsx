@@ -62,6 +62,12 @@ const App = () => {
   const [temaFesta, setTemaFesta] = useState('');
   const [showDataEntrega, setShowDataEntrega] = useState(false);
 
+  // Estados para filtros de período (Relatórios)
+  const [mesVendas, setMesVendas] = useState(new Date().toISOString().slice(0, 7));
+  const [mesEntregas, setMesEntregas] = useState(new Date().toISOString().slice(0, 7));
+  const [mesPedidos, setMesPedidos] = useState(new Date().toISOString().slice(0, 7));
+  const [mesOrcamentos, setMesOrcamentos] = useState(new Date().toISOString().slice(0, 7));
+
   // Produtos
   const produtosIniciais = [
     { id: 1, categoria: 'DIVERSOS', nome: 'Pirulito de chocolate', preco: 1.70 },
@@ -861,6 +867,35 @@ const App = () => {
     }
   };
 
+  // Funções auxiliares para relatórios
+  const filtrarPorMes = (items, mes, campoData = 'dataFinalizacao') => {
+    if (!items || !Array.isArray(items) || !mes) return [];
+    return items.filter(item => {
+      try {
+        if (!item) return false;
+        const dataItem = item[campoData] || item.data || item.createdAt;
+        if (!dataItem) return false;
+        const data = new Date(dataItem);
+        if (isNaN(data.getTime())) return false;
+        const mesItem = data.toISOString().slice(0, 7);
+        return mesItem === mes;
+      } catch (error) {
+        return false;
+      }
+    });
+  };
+
+  const calcularCrescimento = (atual, anterior) => {
+    try {
+      const a = parseFloat(atual) || 0;
+      const b = parseFloat(anterior) || 0;
+      if (b === 0) return a > 0 ? 100 : 0;
+      return ((a - b) / b * 100);
+    } catch (error) {
+      return 0;
+    }
+  };
+
   // Loading inicial
   if (loading) {
     return (
@@ -1498,90 +1533,349 @@ const App = () => {
 
   // Tela Relatórios
   if (currentScreen === 'relatorios') {
-    const totalVendas = finalizados.reduce((sum, pedido) => sum + pedido.total, 0);
-    const pedidosHoje = pedidos.filter(p => {
-      const hoje = new Date().toDateString();
-      const dataEntrega = new Date(p.dataEntrega).toDateString();
-      return dataEntrega === hoje;
-    });
-    const totalEntregasHoje = pedidosHoje.reduce((sum, pedido) => sum + pedido.total, 0);
-    const totalPedidosAtivos = pedidos.reduce((sum, pedido) => sum + pedido.total, 0);
-    const totalOrcamentos = orcamentos.reduce((sum, orcamento) => sum + orcamento.total, 0);
+    // Validar se os arrays existem
+    const finalizadosSeguro = Array.isArray(finalizados) ? finalizados : [];
+    const pedidosSeguro = Array.isArray(pedidos) ? pedidos : [];
+    const orcamentosSeguro = Array.isArray(orcamentos) ? orcamentos : [];
+
+    // Dados filtrados por período
+    const vendasDoMes = filtrarPorMes(finalizadosSeguro, mesVendas, 'dataFinalizacao');
+    const totalVendas = vendasDoMes.reduce((sum, pedido) => {
+      try {
+        return sum + (parseFloat(pedido.total) || 0);
+      } catch {
+        return sum;
+      }
+    }, 0);
+    const entregasDoMes = filtrarPorMes(pedidosSeguro, mesEntregas, 'dataEntrega');
+    const totalEntregasDoMes = entregasDoMes.reduce((sum, pedido) => {
+      try {
+        return sum + (parseFloat(pedido.total) || 0);
+      } catch {
+        return sum;
+      }
+    }, 0);
+    const pedidosDoMes = filtrarPorMes(pedidosSeguro, mesPedidos, 'data');
+    const totalPedidosDoMes = pedidosDoMes.reduce((sum, pedido) => {
+      try {
+        return sum + (parseFloat(pedido.total) || 0);
+      } catch {
+        return sum;
+      }
+    }, 0);
+    const orcamentosDoMes = filtrarPorMes(orcamentosSeguro, mesOrcamentos, 'data');
+    const totalOrcamentosDoMes = orcamentosDoMes.reduce((sum, orcamento) => {
+      try {
+        return sum + (parseFloat(orcamento.total) || 0);
+      } catch {
+        return sum;
+      }
+    }, 0);
+
+    // Dados do mês anterior para comparação
+    let crescimentoVendas = 0;
+    try {
+      const mesAnterior = new Date(mesVendas + '-01');
+      mesAnterior.setMonth(mesAnterior.getMonth() - 1);
+      const mesAnteriorStr = mesAnterior.toISOString().slice(0, 7);
+      const vendasMesAnterior = filtrarPorMes(finalizadosSeguro, mesAnteriorStr, 'dataFinalizacao').reduce((sum, pedido) => {
+        try {
+          return sum + (parseFloat(pedido.total) || 0);
+        } catch {
+          return sum;
+        }
+      }, 0);
+      crescimentoVendas = calcularCrescimento(totalVendas, vendasMesAnterior);
+    } catch (error) {
+      crescimentoVendas = 0;
+    }
+
+    // Produtos mais vendidos do período
     const produtosMaisVendidos = {};
-    finalizados.forEach(pedido => {
-      pedido.itens.forEach(item => {
-        if (produtosMaisVendidos[item.produto.nome]) {
-          produtosMaisVendidos[item.produto.nome] += item.quantidade;
-        } else {
-          produtosMaisVendidos[item.produto.nome] = item.quantidade;
+    try {
+      vendasDoMes.forEach(pedido => {
+        if (pedido.itens && Array.isArray(pedido.itens)) {
+          pedido.itens.forEach(item => {
+            if (item && item.produto && item.produto.nome && item.quantidade) {
+              const nome = item.produto.nome;
+              const quantidade = parseInt(item.quantidade) || 0;
+              produtosMaisVendidos[nome] = (produtosMaisVendidos[nome] || 0) + quantidade;
+            }
+          });
         }
       });
-    });
+    } catch (error) {}
     const topProdutos = Object.entries(produtosMaisVendidos)
-      .sort(([,a], [,b]) => b - a)
+      .sort(([,a], [,b]) => (b || 0) - (a || 0))
       .slice(0, 5);
+
+    // Análise de tendência (últimos 6 meses)
+    const ultimosMeses = [];
+    try {
+      for (let i = 5; i >= 0; i--) {
+        const mes = new Date();
+        mes.setMonth(mes.getMonth() - i);
+        const mesStr = mes.toISOString().slice(0, 7);
+        const vendas = filtrarPorMes(finalizadosSeguro, mesStr, 'dataFinalizacao').reduce((sum, p) => {
+          try {
+            return sum + (parseFloat(p.total) || 0);
+          } catch {
+            return sum;
+          }
+        }, 0);
+        ultimosMeses.push({
+          mes: mes.toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' }),
+          valor: vendas
+        });
+      }
+    } catch (error) {}
+
     return (
       <div className="min-h-screen bg-pink-50 p-4">
         <div className="max-w-md mx-auto">
-          <h2 className="text-2xl font-bold text-pink-800 mb-6">Relatórios</h2>
-          <div className="grid grid-cols-2 gap-4 mb-6">
-            <div className="bg-green-100 p-4 rounded-lg text-center">
-              <div className="text-2xl font-bold text-green-600">{formatCurrency(totalVendas)}</div>
-              <div className="text-sm text-green-700">Total Vendido</div>
-              <div className="text-xs text-green-600">{finalizados.length} pedidos</div>
+          <h2 className="text-2xl font-bold text-pink-800 mb-6">📊 Resumo Financeiro</h2>
+          {/* Cards com filtros de período */}
+          <div className="grid grid-cols-1 gap-4 mb-6">
+            {/* Total Vendido */}
+            <div className="bg-gradient-to-r from-green-100 to-green-200 p-4 rounded-lg border border-green-300">
+              <div className="text-center mb-3">
+                <div className="text-3xl font-bold text-green-700">{formatCurrency(totalVendas)}</div>
+                <div className="text-sm font-medium text-green-800">Total Vendido</div>
+                <div className="text-xs text-green-700 bg-green-100 px-2 py-1 rounded-full inline-block mt-1">
+                  {vendasDoMes.length} pedidos
+                </div>
+                {crescimentoVendas !== 0 && !isNaN(crescimentoVendas) && (
+                  <div className={`text-xs font-bold mt-2 px-2 py-1 rounded-full ${crescimentoVendas > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                    {crescimentoVendas > 0 ? '↗️' : '↘️'} {Math.abs(crescimentoVendas).toFixed(1)}% vs mês anterior
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-green-700 font-medium">Filtrar:</span>
+                <input
+                  type="month"
+                  value={mesVendas}
+                  onChange={(e) => setMesVendas(e.target.value)}
+                  className="flex-1 p-2 text-sm border border-green-300 rounded-md bg-white"
+                />
+              </div>
             </div>
-            <div className="bg-blue-100 p-4 rounded-lg text-center">
-              <div className="text-2xl font-bold text-blue-600">{formatCurrency(totalEntregasHoje)}</div>
-              <div className="text-sm text-blue-700">Entregas Hoje</div>
-              <div className="text-xs text-blue-600">{pedidosHoje.length} pedidos</div>
+            {/* Entregas do Mês */}
+            <div className="bg-gradient-to-r from-blue-100 to-blue-200 p-4 rounded-lg border border-blue-300">
+              <div className="text-center mb-3">
+                <div className="text-3xl font-bold text-blue-700">{formatCurrency(totalEntregasDoMes)}</div>
+                <div className="text-sm font-medium text-blue-800">Entregas do Mês</div>
+                <div className="text-xs text-blue-700 bg-blue-100 px-2 py-1 rounded-full inline-block mt-1">
+                  {entregasDoMes.length} pedidos
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-blue-700 font-medium">Filtrar:</span>
+                <input
+                  type="month"
+                  value={mesEntregas}
+                  onChange={(e) => setMesEntregas(e.target.value)}
+                  className="flex-1 p-2 text-sm border border-blue-300 rounded-md bg-white"
+                />
+              </div>
             </div>
-            <div className="bg-purple-100 p-4 rounded-lg text-center">
-              <div className="text-2xl font-bold text-purple-600">{formatCurrency(totalPedidosAtivos)}</div>
-              <div className="text-sm text-purple-700">Pedidos Ativos</div>
-              <div className="text-xs text-purple-600">{pedidos.length} pedidos</div>
+            {/* Pedidos Criados no Mês */}
+            <div className="bg-gradient-to-r from-purple-100 to-purple-200 p-4 rounded-lg border border-purple-300">
+              <div className="text-center mb-3">
+                <div className="text-3xl font-bold text-purple-700">{formatCurrency(totalPedidosDoMes)}</div>
+                <div className="text-sm font-medium text-purple-800">Pedidos do Mês</div>
+                <div className="text-xs text-purple-700 bg-purple-100 px-2 py-1 rounded-full inline-block mt-1">
+                  {pedidosDoMes.length} pedidos
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-purple-700 font-medium">Filtrar:</span>
+                <input
+                  type="month"
+                  value={mesPedidos}
+                  onChange={(e) => setMesPedidos(e.target.value)}
+                  className="flex-1 p-2 text-sm border border-purple-300 rounded-md bg-white"
+                />
+              </div>
             </div>
-            <div className="bg-orange-100 p-4 rounded-lg text-center">
-              <div className="text-2xl font-bold text-orange-600">{formatCurrency(totalOrcamentos)}</div>
-              <div className="text-sm text-orange-700">Orçamentos</div>
-              <div className="text-xs text-orange-600">{orcamentos.length} pendentes</div>
+            {/* Orçamentos do Mês */}
+            <div className="bg-gradient-to-r from-orange-100 to-orange-200 p-4 rounded-lg border border-orange-300">
+              <div className="text-center mb-3">
+                <div className="text-3xl font-bold text-orange-700">{formatCurrency(totalOrcamentosDoMes)}</div>
+                <div className="text-sm font-medium text-orange-800">Orçamentos do Mês</div>
+                <div className="text-xs text-orange-700 bg-orange-100 px-2 py-1 rounded-full inline-block mt-1">
+                  {orcamentosDoMes.length} pendentes
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-orange-700 font-medium">Filtrar:</span>
+                <input
+                  type="month"
+                  value={mesOrcamentos}
+                  onChange={(e) => setMesOrcamentos(e.target.value)}
+                  className="flex-1 p-2 text-sm border border-orange-300 rounded-md bg-white"
+                />
+              </div>
             </div>
           </div>
-          <div className="bg-white p-4 rounded-lg shadow mb-4">
-            <h3 className="font-bold text-lg mb-4">🏆 Top 5 Produtos</h3>
+          {/* Tendência dos últimos 6 meses */}
+          {ultimosMeses.length > 0 && (
+            <div className="bg-white p-4 rounded-lg shadow-lg mb-4 border border-gray-200">
+              <h3 className="font-bold text-lg mb-4 text-gray-800 flex items-center gap-2">
+                📈 Evolução das Vendas (6 meses)
+              </h3>
+              <div className="space-y-3">
+                {ultimosMeses.map((item, index) => {
+                  const maxValue = Math.max(...ultimosMeses.map(m => Number(m.valor) || 0));
+                  const itemValue = Number(item.valor) || 0;
+                  const percentage = maxValue > 0 ? (itemValue / maxValue) * 100 : 0;
+                  return (
+                    <div key={`mes-${index}`} className="flex items-center gap-3">
+                      <div className="text-sm font-medium w-20 text-gray-700">{item.mes || ''}</div>
+                      <div className="flex-1 bg-gray-200 rounded-full h-5 relative overflow-hidden">
+                        <div 
+                          className="bg-gradient-to-r from-pink-400 to-pink-600 h-5 rounded-full transition-all duration-500 ease-out"
+                          style={{ width: `${Math.max(percentage, 0)}%` }}
+                        ></div>
+                      </div>
+                      <div className="text-sm font-bold text-gray-800 w-24 text-right">
+                        {formatCurrency(itemValue)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {/* Top 5 Produtos */}
+          <div className="bg-white p-4 rounded-lg shadow-lg mb-4 border border-gray-200">
+            <h3 className="font-bold text-lg mb-4 text-gray-800 flex items-center gap-2">
+              🏆 Top 5 Produtos do Período
+            </h3>
+            <div className="text-sm text-gray-600 mb-4 bg-gray-50 p-2 rounded">
+              Baseado em vendas de {(() => {
+                try {
+                  return new Date(mesVendas + '-01').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+                } catch {
+                  return 'período selecionado';
+                }
+              })()}
+            </div>
             {topProdutos.length === 0 ? (
-              <div className="text-center text-gray-500">Nenhuma venda registrada ainda</div>
+              <div className="text-center text-gray-500 py-8">
+                <div className="text-4xl mb-2">📦</div>
+                Nenhuma venda registrada no período
+              </div>
             ) : (
               topProdutos.map(([produto, quantidade], index) => (
-                <div key={produto} className="flex justify-between items-center mb-2 p-2 bg-gray-50 rounded">
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg font-bold text-purple-600">#{index + 1}</span>
-                    <span className="text-sm">{produto}</span>
+                <div key={`produto-${index}`} className="flex justify-between items-center mb-3 p-3 bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg border border-gray-200">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xl font-bold text-purple-600 bg-purple-100 w-8 h-8 rounded-full flex items-center justify-center">
+                      {index + 1}
+                    </span>
+                    <span className="text-sm font-medium text-gray-800">{produto}</span>
                   </div>
-                  <span className="font-bold text-green-600">{quantidade}x</span>
+                  <span className="font-bold text-green-600 bg-green-100 px-3 py-1 rounded-full text-sm">
+                    {quantidade}x
+                  </span>
                 </div>
               ))
             )}
           </div>
-          {pedidosHoje.length > 0 && (
-            <div className="bg-white p-4 rounded-lg shadow mb-4">
-              <h3 className="font-bold text-lg mb-4">📅 Entregas de Hoje</h3>
-              {pedidosHoje.map(pedido => (
-                <div key={pedido.id} className="border-l-4 border-blue-500 pl-3 mb-3 bg-blue-50 p-2 rounded">
-                  <div className="font-medium">{pedido.cliente || 'Cliente não informado'}</div>
-                  <div className="text-sm text-gray-600">{formatCurrency(pedido.total)}</div>
-                  {pedido.temaFesta && (
-                    <div className="text-sm text-purple-600">🎉 {pedido.temaFesta}</div>
-                  )}
+          {/* Métricas Avançadas */}
+          <div className="bg-white p-4 rounded-lg shadow-lg mb-4 border border-gray-200">
+            <h3 className="font-bold text-lg mb-4 text-gray-800 flex items-center gap-2">
+              📊 Análise do Período
+            </h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-lg border border-blue-200">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-blue-700">
+                    {vendasDoMes.length > 0 ? formatCurrency(totalVendas / vendasDoMes.length) : formatCurrency(0)}
+                  </div>
+                  <div className="text-sm font-medium text-blue-800">Ticket Médio</div>
                 </div>
-              ))}
+              </div>
+              <div className="bg-gradient-to-br from-green-50 to-green-100 p-4 rounded-lg border border-green-200">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-green-700">
+                    {vendasDoMes.reduce((sum, p) => {
+                      try {
+                        if (p.itens && Array.isArray(p.itens)) {
+                          return sum + p.itens.reduce((s, i) => s + (parseInt(i.quantidade) || 0), 0);
+                        }
+                        return sum;
+                      } catch {
+                        return sum;
+                      }
+                    }, 0)}
+                  </div>
+                  <div className="text-sm font-medium text-green-800">Itens Vendidos</div>
+                </div>
+              </div>
+              <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-lg border border-purple-200">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-purple-700">
+                    {orcamentosDoMes.length > 0 ? ((pedidosDoMes.length / orcamentosDoMes.length) * 100).toFixed(1) : 0}%
+                  </div>
+                  <div className="text-sm font-medium text-purple-800">Taxa Conversão</div>
+                </div>
+              </div>
+              <div className="bg-gradient-to-br from-orange-50 to-orange-100 p-4 rounded-lg border border-orange-200">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-orange-700">
+                    {entregasDoMes.length}
+                  </div>
+                  <div className="text-sm font-medium text-orange-800">Entregas Mês</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          {/* Entregas do período selecionado */}
+          {entregasDoMes.length > 0 && (
+            <div className="bg-white p-4 rounded-lg shadow-lg mb-4 border border-gray-200">
+              <h3 className="font-bold text-lg mb-4 text-gray-800 flex items-center gap-2">
+                📅 Entregas do Período
+              </h3>
+              <div className="text-sm text-gray-600 mb-4 bg-gray-50 p-2 rounded">
+                {(() => {
+                  try {
+                    return new Date(mesEntregas + '-01').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+                  } catch {
+                    return 'Período selecionado';
+                  }
+                })()}
+              </div>
+              <div className="max-h-48 overflow-y-auto space-y-3">
+                {entregasDoMes.slice(0, 10).map((pedido, idx) => (
+                  <div key={`entrega-${idx}`} className="border-l-4 border-blue-500 pl-4 bg-gradient-to-r from-blue-50 to-blue-100 p-3 rounded-lg">
+                    <div className="font-medium text-gray-800">{pedido.cliente || 'Cliente não informado'}</div>
+                    <div className="text-sm text-gray-600 flex justify-between items-center mt-1">
+                      <span>Entrega: {formatDate(pedido.dataEntrega)}</span>
+                      <span className="font-bold text-blue-700 bg-blue-200 px-2 py-1 rounded-full text-xs">
+                        {formatCurrency(pedido.total)}
+                      </span>
+                    </div>
+                    {pedido.temaFesta && (
+                      <div className="text-sm text-purple-600 font-medium mt-1">🎉 {pedido.temaFesta}</div>
+                    )}
+                  </div>
+                ))}
+                {entregasDoMes.length > 10 && (
+                  <div className="text-center text-gray-500 text-sm bg-gray-50 p-3 rounded-lg">
+                    ... e mais {entregasDoMes.length - 10} entregas
+                  </div>
+                )}
+              </div>
             </div>
           )}
-          <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded text-center">
-            📊 <strong>Em breve:</strong> Gráficos detalhados, análise por período e muito mais!
+          {/* Dica */}
+          <div className="bg-gradient-to-r from-yellow-100 to-yellow-200 border border-yellow-400 text-yellow-800 px-4 py-3 rounded-lg text-center shadow-sm">
+            💡 <strong>Dica:</strong> Use os filtros de mês para analisar diferentes períodos e identificar tendências sazonais!
           </div>
           <button
             onClick={() => setCurrentScreen('home')}
-            className="fixed bottom-4 left-4 bg-gray-500 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg"
+            className="fixed bottom-4 left-4 bg-gray-600 hover:bg-gray-700 text-white p-3 rounded-full shadow-lg transition-colors"
           >
             <ChevronLeft size={24} />
           </button>
