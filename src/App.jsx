@@ -1,6 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronLeft, Plus, Check, X, Edit3, Save, Wifi, WifiOff, User, LogOut, Download, RefreshCw } from 'lucide-react';
 
+// Imports do Firebase
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut, 
+  onAuthStateChanged 
+} from 'firebase/auth';
+import { 
+  collection, 
+  addDoc, 
+  getDocs, 
+  doc, 
+  updateDoc, 
+  deleteDoc, 
+  query, 
+  where, 
+  orderBy 
+} from 'firebase/firestore';
+import { auth, db } from './config/firebase';
+
 const App = () => {
   // Estados de PWA
   const [deferredPrompt, setDeferredPrompt] = useState(null);
@@ -8,12 +28,12 @@ const App = () => {
   const [isAppInstalled, setIsAppInstalled] = useState(false);
   const [updateAvailable, setUpdateAvailable] = useState(false);
 
-  // Estados de autenticação (simulado)
+  // Estados de autenticação
   const [user, setUser] = useState(null);
   const [showAuth, setShowAuth] = useState(false);
   const [authMode, setAuthMode] = useState('login');
   const [authLoading, setAuthLoading] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   // Estados da aplicação
   const [currentScreen, setCurrentScreen] = useState('home');
@@ -27,7 +47,7 @@ const App = () => {
   const [editingDataEntrega, setEditingDataEntrega] = useState(null);
   const [editingSinal, setEditingSinal] = useState(null);
   const [editingItemQuantidade, setEditingItemQuantidade] = useState(null);
-  const [isOnline, setIsOnline] = useState(true);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
 
   // Estados para edição de produtos
   const [editingProductName, setEditingProductName] = useState(null);
@@ -45,18 +65,11 @@ const App = () => {
   const [temaFesta, setTemaFesta] = useState('');
   const [showDataEntrega, setShowDataEntrega] = useState(false);
 
-  // Estados para sincronização
-  const [pendingSync, setPendingSync] = useState(false);
-  const [syncMessage, setSyncMessage] = useState('');
-
-  // Estados para filtros de período
+  // Estados para filtros de período (Relatórios)
   const [mesVendas, setMesVendas] = useState(new Date().toISOString().slice(0, 7));
   const [mesEntregas, setMesEntregas] = useState(new Date().toISOString().slice(0, 7));
   const [mesPedidos, setMesPedidos] = useState(new Date().toISOString().slice(0, 7));
   const [mesOrcamentos, setMesOrcamentos] = useState(new Date().toISOString().slice(0, 7));
-
-  // Estados para dados de exemplo
-  const [dadosInicializados, setDadosInicializados] = useState(false);
 
   // Produtos
   const produtosIniciais = [
@@ -95,142 +108,434 @@ const App = () => {
 
   const [produtos, setProdutos] = useState(produtosIniciais);
 
-  // Inicializar dados de exemplo apenas uma vez
-  useEffect(() => {
-    if (!dadosInicializados) {
-      const agora = new Date();
-      
-      const exemploFinalizado = {
-        id: 'exemplo-finalizado-1',
-        cliente: 'Maria Silva (Exemplo)',
-        total: 84.50,
-        dataFinalizacao: new Date(agora.getFullYear(), agora.getMonth(), 15).toISOString(),
-        dataEntrega: new Date(agora.getFullYear(), agora.getMonth(), 14).toISOString(),
-        temaFesta: 'Princesas',
-        itens: [
-          { produto: { nome: 'Pirulito de chocolate', preco: 1.70 }, quantidade: 20, total: 34.00 },
-          { produto: { nome: 'Mini trufas', preco: 1.50 }, quantidade: 15, total: 22.50 },
-          { produto: { nome: 'Algodão doce - Palito', preco: 4.00 }, quantidade: 7, total: 28.00 }
-        ]
-      };
-      
-      const exemploPedido = {
-        id: 'exemplo-pedido-1',
-        cliente: 'João Santos (Exemplo)',
-        total: 120.00,
-        dataEntrega: new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() + 5).toISOString(),
-        data: new Date(agora.getFullYear(), agora.getMonth(), 10).toISOString(),
-        sinal: 40.00,
-        restante: 80.00,
-        temaFesta: 'Super-Heróis',
-        itens: [
-          { 
-            produto: { nome: 'Cupcake', preco: 6.00 }, 
-            quantidade: 20, 
-            total: 120.00 
-          }
-        ]
-      };
-      
-      const exemploOrcamento = {
-        id: 'exemplo-orcamento-1',
-        cliente: 'Ana Costa (Exemplo)',
-        total: 65.00,
-        data: new Date(agora.getFullYear(), agora.getMonth(), 18).toISOString(),
-        itens: [
-          { produto: { nome: 'Pipoca colorida - Copo 200ml', preco: 1.50 }, quantidade: 30, total: 45.00 },
-          { produto: { nome: 'Maçã do amor', preco: 2.50 }, quantidade: 8, total: 20.00 }
-        ]
-      };
-      
-      setFinalizados([exemploFinalizado]);
-      setPedidos([exemploPedido]);
-      setOrcamentos([exemploOrcamento]);
-      setDadosInicializados(true);
+  // NOVO: Estados para fila de ações offline e status de sincronização
+  const [pendingSync, setPendingSync] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
+
+  // Utilitário para salvar ações pendentes offline
+  const addPendingAction = (action) => {
+    const queue = JSON.parse(localStorage.getItem('donana-pending-actions') || '[]');
+    queue.push(action);
+    localStorage.setItem('donana-pending-actions', JSON.stringify(queue));
+    setPendingSync(true);
+  };
+
+  // Função para processar fila de ações pendentes
+  const processPendingActions = async () => {
+    const queue = JSON.parse(localStorage.getItem('donana-pending-actions') || '[]');
+    console.log('📋 Processando fila de ações pendentes:', queue.length, 'itens');
+    
+    if (!user || queue.length === 0) {
+      console.log('✅ Nenhuma ação pendente para processar');
+      return;
     }
-  }, [dadosInicializados]);
+    
+    let success = 0;
+    let errors = 0;
+    
+    for (const action of queue) {
+      try {
+        console.log('📤 Processando ação:', action.type);
+        
+        if (action.type === 'orcamento') {
+          await addDoc(collection(db, 'orcamentos'), action.data);
+          console.log('✅ Orçamento sincronizado');
+        } else if (action.type === 'pedido') {
+          await addDoc(collection(db, 'pedidos'), action.data);
+          console.log('✅ Pedido sincronizado');
+        } else if (action.type === 'finalizado') {
+          await addDoc(collection(db, 'finalizados'), action.data);
+          console.log('✅ Finalizado sincronizado');
+        } else if (action.type === 'produto') {
+          // Produtos são salvos apenas localmente
+          console.log('ℹ️ Produto - salvamento local apenas');
+        }
+        success++;
+      } catch (e) {
+        console.error('❌ Erro ao processar ação:', action.type, e);
+        errors++;
+      }
+    }
+    
+    console.log(`📊 Resultado: ${success} sucessos, ${errors} erros`);
+    
+    if (success > 0) {
+      setSyncMessage(`✅ ${success} itens sincronizados com sucesso!`);
+      setTimeout(() => setSyncMessage(''), 3000);
+    }
+    
+    if (errors > 0) {
+      setSyncMessage(`⚠️ ${errors} itens com erro na sincronização`);
+      setTimeout(() => setSyncMessage(''), 5000);
+    }
+    
+    // Limpar fila apenas se não houve erros
+    if (errors === 0) {
+      localStorage.setItem('donana-pending-actions', '[]');
+      setPendingSync(false);
+    }
+  };
+
+  // PWA Effects
+  useEffect(() => {
+    if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) {
+      setIsAppInstalled(true);
+    }
+
+    const handleBeforeInstallPrompt = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      const dismissed = localStorage.getItem('installPromptDismissed');
+      if (!dismissed) {
+        setShowInstallPrompt(true);
+      }
+    };
+
+    const handleAppInstalled = () => {
+      setIsAppInstalled(true);
+      setShowInstallPrompt(false);
+      setDeferredPrompt(null);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.ready
+        .then((registration) => {
+          registration.addEventListener('updatefound', () => {
+            const newWorker = registration.installing;
+            if (newWorker) {
+              newWorker.addEventListener('statechange', () => {
+                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                  setUpdateAvailable(true);
+                }
+              });
+            }
+          });
+        })
+        .catch((error) => {
+          console.warn('Service Worker não disponível:', error);
+        });
+    }
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  // Monitorar status de conexão e processar fila ao voltar online
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      processPendingActions();
+    };
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    // Se já estiver online ao abrir, processa fila
+    if (navigator.onLine) processPendingActions();
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [user]);
+
+  // Sistema de persistência - Produtos localmente, dados principais no Firebase
+  useEffect(() => {
+    localStorage.setItem('donana-produtos', JSON.stringify(produtos));
+  }, [produtos]);
+
+  // Carregar apenas produtos do localStorage na inicialização
+  useEffect(() => {
+    const produtosSalvos = localStorage.getItem('donana-produtos');
+    if (produtosSalvos) {
+      try {
+        const produtosParsed = JSON.parse(produtosSalvos);
+        if (Array.isArray(produtosParsed) && produtosParsed.length > 0) {
+          setProdutos(produtosParsed);
+        }
+      } catch (error) {
+        console.warn('Erro ao carregar produtos salvos:', error);
+      }
+    }
+  }, []);
+
+  // Monitorar autenticação
+  useEffect(() => {
+    console.log('👁️ Monitorando mudanças de autenticação...');
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      console.log('🔐 Status de autenticação mudou:', user ? `Logado: ${user.email}` : 'Deslogado');
+      setUser(user);
+      setLoading(false);
+      
+      if (user) {
+        console.log('👤 Usuário logado, carregando dados...');
+        loadUserData(user.uid);
+      } else {
+        console.log('👤 Usuário deslogado, limpando dados...');
+        setOrcamentos([]);
+        setPedidos([]);
+        setFinalizados([]);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Carregar dados do usuário do Firebase
+  const loadUserData = async (userId) => {
+    console.log('🔄 loadUserData chamado com userId:', userId);
+    
+    if (!userId) {
+      console.log('❌ userId não fornecido');
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      if (!db) {
+        console.log('❌ db não disponível');
+        return;
+      }
+
+      console.log('📊 Carregando dados do Firebase...');
+
+      // Carregar TODOS os orçamentos (sistema compartilhado)
+      const orcamentosRef = collection(db, 'orcamentos');
+      console.log('🔍 Consultando TODOS os orçamentos...');
+      const orcamentosSnapshot = await getDocs(orcamentosRef);
+      console.log('📄 Orçamentos encontrados:', orcamentosSnapshot.docs.length);
+      
+      const orcamentosData = orcamentosSnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          syncedWithFirebase: true
+        };
+      });
+      
+      orcamentosData.sort((a, b) => {
+        const dateA = new Date(a.data || a.createdAt?.toDate?.() || a.createdAt || 0);
+        const dateB = new Date(b.data || b.createdAt?.toDate?.() || b.createdAt || 0);
+        return dateB - dateA;
+      });
+      
+      console.log('✅ Orçamentos carregados:', orcamentosData.length);
+      setOrcamentos(orcamentosData);
+
+      // Carregar TODOS os pedidos (sistema compartilhado)
+      const pedidosRef = collection(db, 'pedidos');
+      console.log('🔍 Consultando TODOS os pedidos...');
+      const pedidosSnapshot = await getDocs(pedidosRef);
+      console.log('📄 Pedidos encontrados:', pedidosSnapshot.docs.length);
+      
+      const pedidosData = pedidosSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        syncedWithFirebase: true
+      }));
+      
+      pedidosData.sort((a, b) => new Date(a.dataEntrega || 0) - new Date(b.dataEntrega || 0));
+      console.log('✅ Pedidos carregados:', pedidosData.length);
+      setPedidos(pedidosData);
+
+      // Carregar TODOS os finalizados (sistema compartilhado)
+      const finalizadosRef = collection(db, 'finalizados');
+      console.log('🔍 Consultando TODOS os finalizados...');
+      const finalizadosSnapshot = await getDocs(finalizadosRef);
+      console.log('📄 Finalizados encontrados:', finalizadosSnapshot.docs.length);
+      
+      const finalizadosData = finalizadosSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        syncedWithFirebase: true
+      }));
+      
+      finalizadosData.sort((a, b) => {
+        const dateA = new Date(a.dataFinalizacao || 0);
+        const dateB = new Date(b.dataFinalizacao || 0);
+        return dateB - dateA;
+      });
+      
+      console.log('✅ Finalizados carregados:', finalizadosData.length);
+      setFinalizados(finalizadosData);
+
+      // Backup local
+      try {
+        localStorage.setItem('donana-orcamentos-backup', JSON.stringify(orcamentosData));
+        localStorage.setItem('donana-pedidos-backup', JSON.stringify(pedidosData));
+        localStorage.setItem('donana-finalizados-backup', JSON.stringify(finalizadosData));
+        console.log('💾 Backup local salvo');
+      } catch (e) {
+        console.warn('Erro ao salvar backup:', e);
+      }
+
+    } catch (error) {
+      console.error('❌ Erro ao carregar do Firebase:', error);
+      
+      // Se houver erro, tentar carregar backup local
+      console.log('🔄 Tentando carregar backup local...');
+      try {
+        const orcamentosBackup = localStorage.getItem('donana-orcamentos-backup');
+        const pedidosBackup = localStorage.getItem('donana-pedidos-backup');
+        const finalizadosBackup = localStorage.getItem('donana-finalizados-backup');
+        
+        if (orcamentosBackup) {
+          const orcamentosLocal = JSON.parse(orcamentosBackup);
+          setOrcamentos(Array.isArray(orcamentosLocal) ? orcamentosLocal : []);
+          console.log('📊 Orçamentos locais carregados:', orcamentosLocal.length);
+        }
+        
+        if (pedidosBackup) {
+          const pedidosLocal = JSON.parse(pedidosBackup);
+          setPedidos(Array.isArray(pedidosLocal) ? pedidosLocal : []);
+          console.log('📊 Pedidos locais carregados:', pedidosLocal.length);
+        }
+        
+        if (finalizadosBackup) {
+          const finalizadosLocal = JSON.parse(finalizadosBackup);
+          setFinalizados(Array.isArray(finalizadosLocal) ? finalizadosLocal : []);
+          console.log('📊 Finalizados locais carregados:', finalizadosLocal.length);
+        }
+      } catch (backupError) {
+        console.error('❌ Erro ao carregar backup local:', backupError);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Função para forçar recarregamento
+  const forceReloadData = async () => {
+    if (!user) {
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      console.log('🔄 Forçando recarregamento de dados...');
+      await loadUserData(user.uid);
+    } catch (error) {
+      console.error('❌ Erro ao recarregar:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Função para sincronização manual
+  const sincronizarManualmente = async () => {
+    if (!user) {
+      alert('⚠️ Faça login para sincronizar!');
+      return;
+    }
+    
+    console.log('🔄 Iniciando sincronização manual...');
+    setLoading(true);
+    
+    try {
+      // Primeiro, processar ações pendentes
+      console.log('📤 Processando ações pendentes...');
+      await processPendingActions();
+      
+      // Depois, recarregar dados do Firebase
+      console.log('📥 Recarregando dados do Firebase...');
+      await loadUserData(user.uid);
+      
+      setSyncMessage('✅ Sincronização concluída com sucesso!');
+      setTimeout(() => setSyncMessage(''), 3000);
+      
+    } catch (error) {
+      console.error('❌ Erro na sincronização:', error);
+      setSyncMessage('❌ Erro na sincronização: ' + error.message);
+      setTimeout(() => setSyncMessage(''), 5000);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Limpar cache local
+  const clearLocalData = () => {
+    if (!user) {
+      return;
+    }
+    
+    if (window.confirm('Limpar cache local?')) {
+      localStorage.removeItem('donana-orcamentos-backup');
+      localStorage.removeItem('donana-pedidos-backup');
+      localStorage.removeItem('donana-finalizados-backup');
+      
+      loadUserData(user.uid);
+    }
+  };
+
+  // PWA Functions
+  const handleInstallApp = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        setDeferredPrompt(null);
+        setShowInstallPrompt(false);
+      }
+    }
+  };
+
+  const handleUpdateApp = () => {
+    if (updateAvailable) {
+      window.location.reload();
+    }
+  };
+
+  const dismissInstallPrompt = () => {
+    setShowInstallPrompt(false);
+    localStorage.setItem('installPromptDismissed', 'true');
+  };
+
+  // Funções de autenticação
+  const handleAuth = async (email, password) => {
+    console.log('🔐 Tentando autenticação:', { email, authMode });
+    setAuthLoading(true);
+    try {
+      if (authMode === 'login') {
+        console.log('🔑 Fazendo login...');
+        await signInWithEmailAndPassword(auth, email, password);
+        console.log('✅ Login realizado com sucesso');
+      } else {
+        console.log('📝 Criando nova conta...');
+        await createUserWithEmailAndPassword(auth, email, password);
+        console.log('✅ Conta criada com sucesso');
+      }
+      setShowAuth(false);
+    } catch (error) {
+      console.error('❌ Erro na autenticação:', error);
+      alert('Erro na autenticação: ' + error.message);
+    }
+    setAuthLoading(false);
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+      setCurrentScreen('home');
+    } catch (error) {
+      console.error('Erro ao fazer logout:', error);
+    }
+  };
 
   // Funções auxiliares
   const formatCurrency = (value) => {
-    try {
-      let num = value;
-      if (typeof value === 'string') {
-        num = parseFloat(value.replace(',', '.'));
-      }
-      if (typeof num !== 'number' || isNaN(num) || !isFinite(num)) {
-        num = 0;
-      }
-      return new Intl.NumberFormat('pt-BR', {
-        style: 'currency',
-        currency: 'BRL'
-      }).format(num);
-    } catch (error) {
-      return 'R$ 0,00';
-    }
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL'
+    }).format(value);
   };
 
   const formatDate = (date) => {
-    try {
-      if (!date) return 'Data não informada';
-      const d = new Date(date);
-      if (isNaN(d.getTime())) return 'Data inválida';
-      return d.toLocaleDateString('pt-BR');
-    } catch (error) {
-      return 'Data inválida';
-    }
-  };
-
-  // Função para filtrar por mês
-  const filtrarPorMes = (items, mes, campoData = 'dataFinalizacao') => {
-    if (!items || !Array.isArray(items) || !mes) return [];
-    
-    return items.filter(item => {
-      try {
-        if (!item) return false;
-        
-        const dataItem = item[campoData] || item.data || item.createdAt;
-        if (!dataItem) return false;
-        
-        const data = new Date(dataItem);
-        if (isNaN(data.getTime())) return false;
-        
-        const mesItem = data.toISOString().slice(0, 7);
-        return mesItem === mes;
-      } catch (error) {
-        return false;
-      }
-    });
-  };
-
-  // Função para calcular crescimento
-  const calcularCrescimento = (atual, anterior) => {
-    try {
-      const a = parseFloat(atual) || 0;
-      const b = parseFloat(anterior) || 0;
-      if (b === 0) return a > 0 ? 100 : 0;
-      return ((a - b) / b * 100);
-    } catch (error) {
-      return 0;
-    }
-  };
-
-  // Funções de autenticação simuladas
-  const handleAuth = async (email, password) => {
-    setAuthLoading(true);
-    setTimeout(() => {
-      setUser({ email, uid: 'demo-user-123' });
-      setShowAuth(false);
-      setAuthLoading(false);
-      setSyncMessage('✅ Login realizado com sucesso!');
-      setTimeout(() => setSyncMessage(''), 3000);
-    }, 1000);
-  };
-
-  const handleSignOut = () => {
-    setUser(null);
-    setCurrentScreen('home');
-    setSyncMessage('Logout realizado com sucesso!');
-    setTimeout(() => setSyncMessage(''), 3000);
+    return new Date(date).toLocaleDateString('pt-BR');
   };
 
   // Funções do carrinho
@@ -264,11 +569,22 @@ const App = () => {
     setQuantidade('');
   };
 
-  // Salvar orçamento
-  const saveOrcamento = () => {
-    if (carrinho.length === 0) return;
+  // Salvar orçamento (adaptado para offline)
+  const saveOrcamento = async () => {
+    console.log('🔍 Debug saveOrcamento:', { 
+      carrinhoLength: carrinho.length, 
+      user: user?.email, 
+      isOnline, 
+      db: !!db 
+    });
+    
+    if (carrinho.length === 0) {
+      console.log('❌ Carrinho vazio');
+      return;
+    }
     
     if (!user) {
+      console.log('❌ Usuário não logado');
       alert('⚠️ Faça login para salvar orçamentos!');
       setShowAuth(true);
       return;
@@ -276,7 +592,6 @@ const App = () => {
     
     const agora = new Date();
     const novoOrcamento = {
-      id: Date.now().toString(),
       cliente: nomeCliente.trim() || '',
       data: agora.toISOString(),
       itens: carrinho.map(item => ({
@@ -294,51 +609,99 @@ const App = () => {
       createdAt: agora
     };
     
-    setOrcamentos([novoOrcamento, ...orcamentos]);
-    clearCarrinho();
-    setNomeCliente('');
-    setShowClienteInput(false);
-    setCurrentScreen('home');
-    setSyncMessage('✅ Orçamento salvo com sucesso!');
-    setTimeout(() => setSyncMessage(''), 3000);
+    console.log('📝 Tentando salvar orçamento:', novoOrcamento);
+    
+    try {
+      setAuthLoading(true);
+      if (isOnline) {
+        console.log('🌐 Salvando online...');
+        const docRef = await addDoc(collection(db, 'orcamentos'), novoOrcamento);
+        console.log('✅ Orçamento salvo no Firebase:', docRef.id);
+        await loadUserData(user.uid);
+        setCurrentScreen('home');
+        alert('✅ Orçamento salvo com sucesso!');
+      } else {
+        console.log('📱 Salvando offline...');
+        addPendingAction({ type: 'orcamento', data: novoOrcamento });
+        setSyncMessage('Orçamento salvo localmente. Será sincronizado quando estiver online.');
+        setTimeout(() => setSyncMessage(''), 3000);
+        setCurrentScreen('home');
+      }
+      clearCarrinho();
+      setNomeCliente('');
+      setShowClienteInput(false);
+    } catch (error) {
+      console.error('❌ Erro ao salvar orçamento:', error);
+      alert('❌ Erro ao salvar orçamento: ' + error.message);
+    } finally {
+      setAuthLoading(false);
+    }
   };
 
   // Editar cliente
-  const saveClienteEdit = (orcamentoId, novoNome) => {
-    setOrcamentos(orcamentos.map(o => 
-      o.id === orcamentoId 
-        ? { ...o, cliente: novoNome.trim() }
-        : o
-    ));
-    setEditingCliente(null);
+  const saveClienteEdit = async (orcamentoId, novoNome) => {
+    try {
+      await updateDoc(doc(db, 'orcamentos', orcamentoId), {
+        cliente: novoNome.trim()
+      });
+      
+      setOrcamentos(orcamentos.map(o => 
+        o.id === orcamentoId 
+          ? { ...o, cliente: novoNome.trim() }
+          : o
+      ));
+      setEditingCliente(null);
+    } catch (error) {
+      console.error('Erro ao editar cliente:', error);
+    }
   };
 
-  const savePedidoClienteEdit = (pedidoId, novoNome) => {
-    setPedidos(pedidos.map(p => 
-      p.id === pedidoId 
-        ? { ...p, cliente: novoNome.trim() }
-        : p
-    ));
-    setEditingCliente(null);
-    setSyncMessage('✅ Nome do cliente atualizado!');
-    setTimeout(() => setSyncMessage(''), 2000);
+  const savePedidoClienteEdit = async (pedidoId, novoNome) => {
+    try {
+      await updateDoc(doc(db, 'pedidos', pedidoId), {
+        cliente: novoNome.trim()
+      });
+      
+      setPedidos(pedidos.map(p => 
+        p.id === pedidoId 
+          ? { ...p, cliente: novoNome.trim() }
+          : p
+      ));
+      setEditingCliente(null);
+      setSyncMessage('✅ Nome do cliente atualizado!');
+      setTimeout(() => setSyncMessage(''), 2000);
+    } catch (error) {
+      console.error('Erro ao editar cliente:', error);
+    }
   };
 
-  const savePedidoTemaEdit = (pedidoId, novoTema) => {
-    setPedidos(pedidos.map(p => 
-      p.id === pedidoId 
-        ? { ...p, temaFesta: novoTema.trim() }
-        : p
-    ));
-    setEditingTema(null);
-    setSyncMessage('✅ Tema da festa atualizado!');
-    setTimeout(() => setSyncMessage(''), 2000);
+  const savePedidoTemaEdit = async (pedidoId, novoTema) => {
+    try {
+      await updateDoc(doc(db, 'pedidos', pedidoId), {
+        temaFesta: novoTema.trim()
+      });
+      
+      setPedidos(pedidos.map(p => 
+        p.id === pedidoId 
+          ? { ...p, temaFesta: novoTema.trim() }
+          : p
+      ));
+      setEditingTema(null);
+      setSyncMessage('✅ Tema da festa atualizado!');
+      setTimeout(() => setSyncMessage(''), 2000);
+    } catch (error) {
+      console.error('Erro ao editar tema:', error);
+    }
   };
 
-  const savePedidoDataEdit = (pedidoId, novaData) => {
+  const savePedidoDataEdit = async (pedidoId, novaData) => {
     if (novaData) {
       try {
         const dataFormatada = new Date(novaData).toISOString();
+        await updateDoc(doc(db, 'pedidos', pedidoId), {
+          dataEntrega: dataFormatada
+        });
+        
         setPedidos(pedidos.map(p => 
           p.id === pedidoId 
             ? { ...p, dataEntrega: dataFormatada }
@@ -347,127 +710,215 @@ const App = () => {
         setSyncMessage('✅ Data de entrega atualizada!');
         setTimeout(() => setSyncMessage(''), 2000);
       } catch (error) {
+        console.error('Erro ao editar data:', error);
         alert('Data inválida. Use o formato correto.');
       }
     }
     setEditingDataEntrega(null);
   };
 
-  const savePedidoSinalEdit = (pedidoId, novoSinal) => {
+  const savePedidoSinalEdit = async (pedidoId, novoSinal) => {
     const sinalNumerico = parseFloat(novoSinal.replace(',', '.')) || 0;
     if (sinalNumerico >= 0) {
-      setPedidos(pedidos.map(p => {
-        if (p.id === pedidoId) {
-          const totalAtual = parseFloat(p.total) || 0;
-          const restante = Math.max(0, totalAtual - sinalNumerico);
-          return { ...p, sinal: sinalNumerico, restante: restante };
-        }
-        return p;
-      }));
-      setSyncMessage('✅ Valor do sinal atualizado!');
-      setTimeout(() => setSyncMessage(''), 2000);
+      try {
+        const pedido = pedidos.find(p => p.id === pedidoId);
+        const totalAtual = parseFloat(pedido.total) || 0;
+        const restante = Math.max(0, totalAtual - sinalNumerico);
+        
+        await updateDoc(doc(db, 'pedidos', pedidoId), {
+          sinal: sinalNumerico,
+          restante: restante
+        });
+        
+        setPedidos(pedidos.map(p => {
+          if (p.id === pedidoId) {
+            return { ...p, sinal: sinalNumerico, restante: restante };
+          }
+          return p;
+        }));
+        setSyncMessage('✅ Valor do sinal atualizado!');
+        setTimeout(() => setSyncMessage(''), 2000);
+      } catch (error) {
+        console.error('Erro ao editar sinal:', error);
+      }
     }
     setEditingSinal(null);
   };
 
-  const savePedidoItemQuantidadeEdit = (pedidoId, itemIndex, novaQuantidade) => {
+  const savePedidoItemQuantidadeEdit = async (pedidoId, itemIndex, novaQuantidade) => {
     const quantidade = parseInt(novaQuantidade) || 0;
     if (quantidade > 0) {
-      setPedidos(pedidos.map(p => {
-        if (p.id === pedidoId) {
-          const novosItens = [...p.itens];
-          const item = novosItens[itemIndex];
-          
-          // Garantir que temos acesso ao preço do produto
-          const precoUnitario = item.produto?.preco || (item.total / (item.quantidade || 1)) || 0;
-          
-          // Atualizar o item com nova quantidade e total
-          novosItens[itemIndex] = {
-            ...item,
-            quantidade: quantidade,
-            total: quantidade * precoUnitario
-          };
-          
-          // Recalcular o total do pedido
-          const novoTotal = novosItens.reduce((sum, item) => {
-            const itemTotal = parseFloat(item.total) || 0;
-            return sum + itemTotal;
-          }, 0);
-          
-          // Recalcular o valor restante
-          const sinalAtual = parseFloat(p.sinal) || 0;
-          const novoRestante = Math.max(0, novoTotal - sinalAtual);
-          
-          return { 
-            ...p, 
-            itens: novosItens, 
-            total: novoTotal,
-            restante: novoRestante
-          };
-        }
-        return p;
-      }));
-      setSyncMessage('✅ Quantidade atualizada! Total recalculado.');
-      setTimeout(() => setSyncMessage(''), 2000);
+      try {
+        const pedido = pedidos.find(p => p.id === pedidoId);
+        const novosItens = [...pedido.itens];
+        const item = novosItens[itemIndex];
+        
+        // Garantir que temos acesso ao preço do produto
+        const precoUnitario = item.produto?.preco || (item.total / (item.quantidade || 1)) || 0;
+        
+        // Atualizar o item com nova quantidade e total
+        novosItens[itemIndex] = {
+          ...item,
+          quantidade: quantidade,
+          total: quantidade * precoUnitario
+        };
+        
+        // Recalcular o total do pedido
+        const novoTotal = novosItens.reduce((sum, item) => {
+          const itemTotal = parseFloat(item.total) || 0;
+          return sum + itemTotal;
+        }, 0);
+        
+        // Recalcular o valor restante
+        const sinalAtual = parseFloat(pedido.sinal) || 0;
+        const novoRestante = Math.max(0, novoTotal - sinalAtual);
+        
+        await updateDoc(doc(db, 'pedidos', pedidoId), {
+          itens: novosItens,
+          total: novoTotal,
+          restante: novoRestante
+        });
+        
+        setPedidos(pedidos.map(p => {
+          if (p.id === pedidoId) {
+            return { 
+              ...p, 
+              itens: novosItens, 
+              total: novoTotal,
+              restante: novoRestante
+            };
+          }
+          return p;
+        }));
+        setSyncMessage('✅ Quantidade atualizada! Total recalculado.');
+        setTimeout(() => setSyncMessage(''), 2000);
+      } catch (error) {
+        console.error('Erro ao editar quantidade:', error);
+      }
     }
     setEditingItemQuantidade(null);
   };
 
-  // Confirmar orçamento
-  const confirmarOrcamento = (orcamento) => {
+  // Confirmar orçamento (adaptado para offline)
+  const confirmarOrcamento = async (orcamento) => {
     if (!dataEntrega || !valorSinal) return;
-    
+    if (!user) {
+      alert('Faça login para confirmar pedidos!');
+      return;
+    }
     const sinalNumerico = parseFloat(valorSinal.replace(',', '.')) || 0;
     const novoPedido = {
       ...orcamento,
-      id: Date.now().toString(),
       dataEntrega: new Date(dataEntrega).toISOString(),
       sinal: sinalNumerico,
       restante: orcamento.total - sinalNumerico,
       temaFesta: temaFesta.trim() || '',
-      userId: user?.uid || 'demo',
+      userId: user.uid,
       createdAt: new Date()
     };
-    
-    setPedidos([...pedidos, novoPedido]);
-    setOrcamentos(orcamentos.filter(o => o.id !== orcamento.id));
-    setDataEntrega('');
-    setValorSinal('');
-    setTemaFesta('');
-    setShowDataEntrega(false);
-    setSyncMessage('✅ Pedido confirmado com sucesso!');
-    setTimeout(() => setSyncMessage(''), 3000);
-  };
-
-  // Finalizar pedido
-  const finalizarPedido = (pedido) => {
-    const pedidoFinalizado = {
-      ...pedido,
-      id: Date.now().toString(),
-      dataFinalizacao: new Date().toISOString(),
-      userId: user?.uid || 'demo'
-    };
-    
-    setFinalizados([pedidoFinalizado, ...finalizados]);
-    setPedidos(pedidos.filter(p => p.id !== pedido.id));
-    setSyncMessage('✅ Pedido finalizado com sucesso!');
-    setTimeout(() => setSyncMessage(''), 3000);
-  };
-
-  // Cancelar orçamento
-  const cancelarOrcamento = (orcamentoId) => {
-    if (window.confirm('Tem certeza que deseja cancelar este orçamento?')) {
-      setOrcamentos(orcamentos.filter(o => o.id !== orcamentoId));
-      setSyncMessage('Orçamento cancelado');
-      setTimeout(() => setSyncMessage(''), 3000);
+    delete novoPedido.id;
+    delete novoPedido.syncedWithFirebase;
+    try {
+      if (isOnline) {
+        const docRef = await addDoc(collection(db, 'pedidos'), novoPedido);
+        if (orcamento.syncedWithFirebase) {
+          await deleteDoc(doc(db, 'orcamentos', orcamento.id));
+        }
+        await loadUserData(user.uid);
+      } else {
+        addPendingAction({ type: 'pedido', data: novoPedido });
+        setSyncMessage('Pedido salvo localmente. Será sincronizado quando estiver online.');
+        setTimeout(() => setSyncMessage(''), 3000);
+      }
+      setDataEntrega('');
+      setValorSinal('');
+      setTemaFesta('');
+      setShowDataEntrega(false);
+    } catch (error) {
+      alert('Erro ao confirmar orçamento: ' + error.message);
     }
   };
 
-  const cancelarPedido = (pedidoId) => {
+  // Finalizar pedido (adaptado para offline)
+  const finalizarPedido = async (pedido) => {
+    if (!user) {
+      alert('Faça login para finalizar pedidos!');
+      return;
+    }
+    const pedidoFinalizado = {
+      ...pedido,
+      dataFinalizacao: new Date().toISOString(),
+      userId: user.uid
+    };
+    delete pedidoFinalizado.id;
+    delete pedidoFinalizado.syncedWithFirebase;
+    try {
+      if (isOnline) {
+        await addDoc(collection(db, 'finalizados'), pedidoFinalizado);
+        if (pedido.syncedWithFirebase) {
+          await deleteDoc(doc(db, 'pedidos', pedido.id));
+        }
+        await loadUserData(user.uid);
+      } else {
+        addPendingAction({ type: 'finalizado', data: pedidoFinalizado });
+        setSyncMessage('Finalização salva localmente. Será sincronizada quando estiver online.');
+        setTimeout(() => setSyncMessage(''), 3000);
+      }
+    } catch (error) {
+      alert('Erro ao finalizar pedido: ' + error.message);
+    }
+  };
+
+  // Cancelar orçamento
+  const cancelarOrcamento = async (orcamentoId) => {
+    if (window.confirm('Tem certeza que deseja cancelar este orçamento?')) {
+      if (!user) {
+        alert('Faça login para gerenciar orçamentos!');
+        return;
+      }
+
+      try {
+        const orcamento = orcamentos.find(o => o.id === orcamentoId);
+        
+        if (orcamento?.syncedWithFirebase) {
+          await deleteDoc(doc(db, 'orcamentos', orcamentoId));
+        }
+        
+        const novosOrcamentos = orcamentos.filter(o => o.id !== orcamentoId);
+        setOrcamentos(novosOrcamentos);
+        
+        localStorage.setItem('donana-orcamentos-backup', JSON.stringify(novosOrcamentos));
+        
+      } catch (error) {
+        console.error('Erro ao cancelar:', error);
+        alert('Erro ao cancelar orçamento');
+      }
+    }
+  };
+
+  const cancelarPedido = async (pedidoId) => {
     if (window.confirm('Tem certeza que deseja cancelar este pedido?')) {
-      setPedidos(pedidos.filter(p => p.id !== pedidoId));
-      setSyncMessage('Pedido cancelado');
-      setTimeout(() => setSyncMessage(''), 3000);
+      if (!user) {
+        alert('Faça login para gerenciar pedidos!');
+        return;
+      }
+
+      try {
+        const pedido = pedidos.find(p => p.id === pedidoId);
+        
+        if (pedido?.syncedWithFirebase) {
+          await deleteDoc(doc(db, 'pedidos', pedidoId));
+        }
+        
+        const novosPedidos = pedidos.filter(p => p.id !== pedidoId);
+        setPedidos(novosPedidos);
+        
+        localStorage.setItem('donana-pedidos-backup', JSON.stringify(novosPedidos));
+        
+      } catch (error) {
+        console.error('Erro ao cancelar:', error);
+        alert('Erro ao cancelar pedido');
+      }
     }
   };
 
@@ -495,7 +946,7 @@ const App = () => {
     setEditingProductPrice(null);
   };
 
-  // Adicionar produto
+  // Adicionar produto (adaptado para offline, apenas local)
   const addNewProduct = () => {
     if (newProduct.nome.trim() && newProduct.preco && parseFloat(newProduct.preco) > 0) {
       const categoria = newProduct.categoria === 'NOVA_CATEGORIA' ? 
@@ -510,35 +961,64 @@ const App = () => {
       setProdutos([...produtos, novoProduto]);
       setNewProduct({ nome: '', preco: '', categoria: 'DIVERSOS' });
       setShowAddProduct(false);
-      setSyncMessage('✅ Produto adicionado com sucesso!');
-      setTimeout(() => setSyncMessage(''), 3000);
+      // Se quiser sincronizar produtos com nuvem, pode adicionar na fila também
+      // addPendingAction({ type: 'produto', data: novoProduto });
     }
   };
 
   const deleteProduct = (produtoId) => {
     if (window.confirm('Tem certeza que deseja excluir este produto?')) {
       setProdutos(produtos.filter(p => p.id !== produtoId));
-      setSyncMessage('Produto excluído');
-      setTimeout(() => setSyncMessage(''), 3000);
     }
   };
 
   const resetProducts = () => {
     if (window.confirm('Tem certeza que deseja restaurar o catálogo original? Todas as alterações serão perdidas.')) {
       setProdutos(produtosIniciais);
-      setSyncMessage('Catálogo restaurado');
-      setTimeout(() => setSyncMessage(''), 3000);
+      localStorage.removeItem('donana-produtos');
     }
   };
 
-  const sincronizarManualmente = () => {
-    setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-      setSyncMessage('✅ Sincronização concluída!');
-      setTimeout(() => setSyncMessage(''), 3000);
-    }, 1500);
+  // Funções auxiliares para relatórios
+  const filtrarPorMes = (items, mes, campoData = 'dataFinalizacao') => {
+    if (!items || !Array.isArray(items) || !mes) return [];
+    return items.filter(item => {
+      try {
+        if (!item) return false;
+        const dataItem = item[campoData] || item.data || item.createdAt;
+        if (!dataItem) return false;
+        const data = new Date(dataItem);
+        if (isNaN(data.getTime())) return false;
+        const mesItem = data.toISOString().slice(0, 7);
+        return mesItem === mes;
+      } catch (error) {
+        return false;
+      }
+    });
   };
+
+  const calcularCrescimento = (atual, anterior) => {
+    try {
+      const a = parseFloat(atual) || 0;
+      const b = parseFloat(anterior) || 0;
+      if (b === 0) return a > 0 ? 100 : 0;
+      return ((a - b) / b * 100);
+    } catch (error) {
+      return 0;
+    }
+  };
+
+  // Loading inicial
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-pink-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-3xl font-bold text-pink-800 mb-4">APP DONANA</div>
+          <div className="text-gray-600">Carregando...</div>
+        </div>
+      </div>
+    );
+  }
 
   // Modal de Autenticação
   if (showAuth) {
@@ -558,7 +1038,6 @@ const App = () => {
                 required
                 className="w-full p-3 border border-gray-300 rounded-md"
                 placeholder="seu@email.com"
-                defaultValue="demo@donana.com"
               />
             </div>
             
@@ -570,7 +1049,6 @@ const App = () => {
                 required
                 className="w-full p-3 border border-gray-300 rounded-md"
                 placeholder="••••••••"
-                defaultValue="123456"
               />
             </div>
             
@@ -635,9 +1113,55 @@ const App = () => {
             )}
           </div>
 
+          {/* PWA Install Prompt */}
+          {showInstallPrompt && !isAppInstalled && (
+            <div className="bg-pink-500 text-white p-4 rounded-lg mb-4 animate-slide-up">
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <div className="font-bold">📱 Instalar App</div>
+                  <div className="text-sm opacity-90">Acesse offline e tenha melhor experiência!</div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleInstallApp}
+                    className="bg-white text-pink-500 px-3 py-1 rounded text-sm font-bold"
+                  >
+                    <Download size={16} className="inline mr-1" />
+                    Instalar
+                  </button>
+                  <button
+                    onClick={dismissInstallPrompt}
+                    className="text-white hover:bg-pink-600 px-2 py-1 rounded"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Update Available */}
+          {updateAvailable && (
+            <div className="bg-blue-500 text-white p-4 rounded-lg mb-4 animate-slide-up">
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <div className="font-bold">🆕 Atualização Disponível</div>
+                  <div className="text-sm opacity-90">Nova versão com melhorias!</div>
+                </div>
+                <button
+                  onClick={handleUpdateApp}
+                  className="bg-white text-blue-500 px-3 py-1 rounded text-sm font-bold"
+                >
+                  <RefreshCw size={16} className="inline mr-1" />
+                  Atualizar
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Contador de dados */}
           <div className="bg-blue-100 border border-blue-400 text-blue-700 px-3 py-2 rounded mb-6 text-center text-sm">
-            📊 {Array.isArray(orcamentos) ? orcamentos.length : 0} orçamentos • {Array.isArray(pedidos) ? pedidos.length : 0} pedidos • {Array.isArray(finalizados) ? finalizados.length : 0} finalizados
+            📊 {orcamentos.length} orçamentos • {pedidos.length} pedidos • {finalizados.length} finalizados
             {user ? (
               <div className="mt-2">
                 <div className="mt-2 flex justify-center">
@@ -657,9 +1181,14 @@ const App = () => {
             )}
           </div>
 
-          {/* Mensagem de sincronização */}
+          {/* Adicionar aviso visual de sincronização pendente/concluída na tela home */}
+          {pendingSync && (
+            <div className="bg-yellow-200 border border-yellow-400 text-yellow-800 px-3 py-2 rounded mb-2 text-center text-sm animate-bounce-gentle">
+              ⚠️ Existem dados pendentes de sincronização. Eles serão enviados automaticamente quando estiver online.
+            </div>
+          )}
           {syncMessage && (
-            <div className="bg-green-200 border border-green-400 text-green-800 px-3 py-2 rounded mb-2 text-center text-sm">
+            <div className="bg-green-200 border border-green-400 text-green-800 px-3 py-2 rounded mb-2 text-center text-sm animate-fade-in">
               {syncMessage}
             </div>
           )}
@@ -667,9 +1196,9 @@ const App = () => {
           <div className="flex flex-col gap-4">
             {[
               { name: 'ORÇAMENTO', screen: 'orcamento' },
-              { name: 'PENDENTES', screen: 'pendentes', badge: Array.isArray(orcamentos) ? orcamentos.length : 0 },
-              { name: 'PEDIDOS', screen: 'pedidos', badge: Array.isArray(pedidos) ? pedidos.length : 0 },
-              { name: 'FINALIZADOS', screen: 'finalizados', badge: Array.isArray(finalizados) ? finalizados.length : 0 },
+              { name: 'PENDENTES', screen: 'pendentes', badge: orcamentos.length },
+              { name: 'PEDIDOS', screen: 'pedidos', badge: pedidos.length },
+              { name: 'FINALIZADOS', screen: 'finalizados', badge: finalizados.length },
               { name: 'RELATÓRIOS', screen: 'relatorios' },
               { name: 'PRODUTOS', screen: 'produtos' }
             ].map((button) => (
@@ -812,19 +1341,18 @@ const App = () => {
 
   // Tela Pendentes
   if (currentScreen === 'pendentes') {
-    const orcamentosSeguro = Array.isArray(orcamentos) ? orcamentos : [];
     return (
       <div className="min-h-screen bg-pink-50 p-4">
         <div className="max-w-md mx-auto">
           <h2 className="text-2xl font-bold text-pink-800 mb-6">Orçamentos Pendentes</h2>
-          {orcamentosSeguro.length === 0 ? (
+          {orcamentos.length === 0 ? (
             <div className="text-center text-gray-500 mt-8">
               Nenhum orçamento pendente<br />
               <span className="text-sm">Crie um orçamento primeiro!</span>
             </div>
           ) : (
-            orcamentosSeguro.map((orcamento, idx) => (
-              <div key={`orcamento-${idx}`} className="bg-white p-4 rounded-lg shadow mb-4">
+            orcamentos.map((orcamento) => (
+              <div key={orcamento.id} className="bg-white p-4 rounded-lg shadow mb-4">
                 <div className="flex justify-between items-start mb-2">
                   <div className="flex-1">
                     {editingCliente === orcamento.id ? (
@@ -857,10 +1385,10 @@ const App = () => {
                   <div className="text-lg font-bold text-green-600">{formatCurrency(orcamento.total)}</div>
                 </div>
                 <div className="border-t pt-2 mt-2">
-                  {orcamento.itens && Array.isArray(orcamento.itens) && orcamento.itens.map((item, itemIdx) => (
-                    <div key={`item-${itemIdx}`} className="flex justify-between text-sm mb-1">
-                      <span>{item.produto?.nome || 'Produto'} x{item.quantidade || 0}</span>
-                      <span>{formatCurrency(item.total || 0)}</span>
+                  {orcamento.itens.map((item, index) => (
+                    <div key={index} className="flex justify-between text-sm mb-1">
+                      <span>{item.produto.nome} x{item.quantidade}</span>
+                      <span>{formatCurrency(item.total)}</span>
                     </div>
                   ))}
                 </div>
@@ -1149,15 +1677,8 @@ const App = () => {
 
   // Tela Finalizados
   if (currentScreen === 'finalizados') {
-    const finalizadosSeguro = Array.isArray(finalizados) ? finalizados : [];
-    const totalFinalizados = finalizadosSeguro.reduce((sum, pedido) => {
-      try {
-        return sum + (parseFloat(pedido.total) || 0);
-      } catch {
-        return sum;
-      }
-    }, 0);
-    const mediaTicket = finalizadosSeguro.length > 0 ? totalFinalizados / finalizadosSeguro.length : 0;
+    const totalFinalizados = finalizados.reduce((sum, pedido) => sum + pedido.total, 0);
+    const mediaTicket = finalizados.length > 0 ? totalFinalizados / finalizados.length : 0;
     return (
       <div className="min-h-screen bg-pink-50 p-4">
         <div className="max-w-md mx-auto">
@@ -1166,7 +1687,7 @@ const App = () => {
             <h3 className="font-bold text-lg mb-4 text-center">💰 Dashboard Financeiro</h3>
             <div className="grid grid-cols-2 gap-4">
               <div className="text-center">
-                <div className="text-2xl font-bold text-green-600">{finalizadosSeguro.length}</div>
+                <div className="text-2xl font-bold text-green-600">{finalizados.length}</div>
                 <div className="text-sm text-gray-600">Pedidos</div>
               </div>
               <div className="text-center">
@@ -1179,18 +1700,18 @@ const App = () => {
               </div>
             </div>
           </div>
-          {finalizadosSeguro.length === 0 ? (
+          {finalizados.length === 0 ? (
             <div className="text-center text-gray-500 mt-8">
               Nenhum pedido finalizado ainda<br />
               <span className="text-sm">Finalize alguns pedidos para ver o dashboard!</span>
             </div>
           ) : (
-            finalizadosSeguro.map((pedido, idx) => (
-              <div key={`finalizado-${idx}`} className="bg-white p-4 rounded-lg shadow mb-4 border-l-4 border-green-500">
+            finalizados.map((pedido) => (
+              <div key={pedido.id} className="bg-white p-4 rounded-lg shadow mb-4 border-l-4 border-green-500">
                 <div className="flex justify-between items-start mb-2">
                   <div>
                     <div className="font-bold text-lg">{pedido.cliente || 'Cliente não informado'}</div>
-                    <div className="text-sm text-gray-600">Entrega: {formatDate(pedido.dataEntrega || pedido.data)}</div>
+                    <div className="text-sm text-gray-600">Entrega: {formatDate(pedido.dataEntrega)}</div>
                     <div className="text-sm text-gray-600">Finalizado: {formatDate(pedido.dataFinalizacao)}</div>
                     {pedido.temaFesta && (
                       <div className="text-sm text-purple-600 font-medium">🎉 {pedido.temaFesta}</div>
@@ -1202,13 +1723,13 @@ const App = () => {
                   </div>
                 </div>
                 <div className="border-t pt-2 mt-2">
-                  {pedido.itens && Array.isArray(pedido.itens) && pedido.itens.slice(0, 3).map((item, itemIdx) => (
-                    <div key={`item-${itemIdx}`} className="flex justify-between text-sm mb-1">
-                      <span>{item.produto?.nome || 'Produto'} x{item.quantidade || 0}</span>
-                      <span>{formatCurrency(item.total || 0)}</span>
+                  {pedido.itens.slice(0, 3).map((item, index) => (
+                    <div key={index} className="flex justify-between text-sm mb-1">
+                      <span>{item.produto.nome} x{item.quantidade}</span>
+                      <span>{formatCurrency(item.total)}</span>
                     </div>
                   ))}
-                  {pedido.itens && pedido.itens.length > 3 && (
+                  {pedido.itens.length > 3 && (
                     <div className="text-xs text-gray-500 text-center">
                       ... e mais {pedido.itens.length - 3} itens
                     </div>
@@ -1244,7 +1765,6 @@ const App = () => {
         return sum;
       }
     }, 0);
-    
     const entregasDoMes = filtrarPorMes(pedidosSeguro, mesEntregas, 'dataEntrega');
     const totalEntregasDoMes = entregasDoMes.reduce((sum, pedido) => {
       try {
@@ -1253,7 +1773,6 @@ const App = () => {
         return sum;
       }
     }, 0);
-    
     const pedidosDoMes = filtrarPorMes(pedidosSeguro, mesPedidos, 'data');
     const totalPedidosDoMes = pedidosDoMes.reduce((sum, pedido) => {
       try {
@@ -1262,7 +1781,6 @@ const App = () => {
         return sum;
       }
     }, 0);
-    
     const orcamentosDoMes = filtrarPorMes(orcamentosSeguro, mesOrcamentos, 'data');
     const totalOrcamentosDoMes = orcamentosDoMes.reduce((sum, orcamento) => {
       try {
@@ -1278,7 +1796,6 @@ const App = () => {
       const mesAnterior = new Date(mesVendas + '-01');
       mesAnterior.setMonth(mesAnterior.getMonth() - 1);
       const mesAnteriorStr = mesAnterior.toISOString().slice(0, 7);
-      
       const vendasMesAnterior = filtrarPorMes(finalizadosSeguro, mesAnteriorStr, 'dataFinalizacao').reduce((sum, pedido) => {
         try {
           return sum + (parseFloat(pedido.total) || 0);
@@ -1305,10 +1822,7 @@ const App = () => {
           });
         }
       });
-    } catch (error) {
-      // Ignorar erro
-    }
-    
+    } catch (error) {}
     const topProdutos = Object.entries(produtosMaisVendidos)
       .sort(([,a], [,b]) => (b || 0) - (a || 0))
       .slice(0, 5);
@@ -1332,102 +1846,117 @@ const App = () => {
           valor: vendas
         });
       }
-    } catch (error) {
-      // Manter array vazio se houver erro
-    }
+    } catch (error) {}
 
     return (
       <div className="min-h-screen bg-pink-50 p-4">
         <div className="max-w-md mx-auto">
-          <h2 className="text-2xl font-bold text-pink-800 mb-6">Relatórios</h2>
-          
+          <h2 className="text-2xl font-bold text-pink-800 mb-6">📊 Resumo Financeiro</h2>
           {/* Cards com filtros de período */}
           <div className="grid grid-cols-1 gap-4 mb-6">
             {/* Total Vendido */}
-            <div className="bg-green-100 p-4 rounded-lg">
+            <div className="bg-gradient-to-r from-green-100 to-green-200 p-4 rounded-lg border border-green-300">
               <div className="text-center mb-3">
-                <div className="text-2xl font-bold text-green-600">{formatCurrency(totalVendas)}</div>
-                <div className="text-sm text-green-700">Total Vendido</div>
-                <div className="text-xs text-green-600">{vendasDoMes.length} pedidos</div>
+                <div className="text-3xl font-bold text-green-700">{formatCurrency(totalVendas)}</div>
+                <div className="text-sm font-medium text-green-800">Total Vendido</div>
+                <div className="text-xs text-green-700 bg-green-100 px-2 py-1 rounded-full inline-block mt-1">
+                  {vendasDoMes.length} pedidos
+                </div>
                 {crescimentoVendas !== 0 && !isNaN(crescimentoVendas) && (
-                  <div className={`text-xs font-medium ${crescimentoVendas > 0 ? 'text-green-800' : 'text-red-600'}`}>
+                  <div className={`text-xs font-bold mt-2 px-2 py-1 rounded-full ${crescimentoVendas > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                     {crescimentoVendas > 0 ? '↗️' : '↘️'} {Math.abs(crescimentoVendas).toFixed(1)}% vs mês anterior
                   </div>
                 )}
               </div>
-              <input
-                type="month"
-                value={mesVendas}
-                onChange={(e) => setMesVendas(e.target.value)}
-                className="w-full p-2 text-sm border border-gray-300 rounded-md"
-              />
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-green-700 font-medium">Filtrar:</span>
+                <input
+                  type="month"
+                  value={mesVendas}
+                  onChange={(e) => setMesVendas(e.target.value)}
+                  className="flex-1 p-2 text-sm border border-green-300 rounded-md bg-white"
+                />
+              </div>
             </div>
-
             {/* Entregas do Mês */}
-            <div className="bg-blue-100 p-4 rounded-lg">
+            <div className="bg-gradient-to-r from-blue-100 to-blue-200 p-4 rounded-lg border border-blue-300">
               <div className="text-center mb-3">
-                <div className="text-2xl font-bold text-blue-600">{formatCurrency(totalEntregasDoMes)}</div>
-                <div className="text-sm text-blue-700">Entregas do Mês</div>
-                <div className="text-xs text-blue-600">{entregasDoMes.length} pedidos</div>
+                <div className="text-3xl font-bold text-blue-700">{formatCurrency(totalEntregasDoMes)}</div>
+                <div className="text-sm font-medium text-blue-800">Entregas do Mês</div>
+                <div className="text-xs text-blue-700 bg-blue-100 px-2 py-1 rounded-full inline-block mt-1">
+                  {entregasDoMes.length} pedidos
+                </div>
               </div>
-              <input
-                type="month"
-                value={mesEntregas}
-                onChange={(e) => setMesEntregas(e.target.value)}
-                className="w-full p-2 text-sm border border-gray-300 rounded-md"
-              />
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-blue-700 font-medium">Filtrar:</span>
+                <input
+                  type="month"
+                  value={mesEntregas}
+                  onChange={(e) => setMesEntregas(e.target.value)}
+                  className="flex-1 p-2 text-sm border border-blue-300 rounded-md bg-white"
+                />
+              </div>
             </div>
-
             {/* Pedidos Criados no Mês */}
-            <div className="bg-purple-100 p-4 rounded-lg">
+            <div className="bg-gradient-to-r from-purple-100 to-purple-200 p-4 rounded-lg border border-purple-300">
               <div className="text-center mb-3">
-                <div className="text-2xl font-bold text-purple-600">{formatCurrency(totalPedidosDoMes)}</div>
-                <div className="text-sm text-purple-700">Pedidos do Mês</div>
-                <div className="text-xs text-purple-600">{pedidosDoMes.length} pedidos</div>
+                <div className="text-3xl font-bold text-purple-700">{formatCurrency(totalPedidosDoMes)}</div>
+                <div className="text-sm font-medium text-purple-800">Pedidos do Mês</div>
+                <div className="text-xs text-purple-700 bg-purple-100 px-2 py-1 rounded-full inline-block mt-1">
+                  {pedidosDoMes.length} pedidos
+                </div>
               </div>
-              <input
-                type="month"
-                value={mesPedidos}
-                onChange={(e) => setMesPedidos(e.target.value)}
-                className="w-full p-2 text-sm border border-gray-300 rounded-md"
-              />
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-purple-700 font-medium">Filtrar:</span>
+                <input
+                  type="month"
+                  value={mesPedidos}
+                  onChange={(e) => setMesPedidos(e.target.value)}
+                  className="flex-1 p-2 text-sm border border-purple-300 rounded-md bg-white"
+                />
+              </div>
             </div>
-
             {/* Orçamentos do Mês */}
-            <div className="bg-orange-100 p-4 rounded-lg">
+            <div className="bg-gradient-to-r from-orange-100 to-orange-200 p-4 rounded-lg border border-orange-300">
               <div className="text-center mb-3">
-                <div className="text-2xl font-bold text-orange-600">{formatCurrency(totalOrcamentosDoMes)}</div>
-                <div className="text-sm text-orange-700">Orçamentos do Mês</div>
-                <div className="text-xs text-orange-600">{orcamentosDoMes.length} pendentes</div>
+                <div className="text-3xl font-bold text-orange-700">{formatCurrency(totalOrcamentosDoMes)}</div>
+                <div className="text-sm font-medium text-orange-800">Orçamentos do Mês</div>
+                <div className="text-xs text-orange-700 bg-orange-100 px-2 py-1 rounded-full inline-block mt-1">
+                  {orcamentosDoMes.length} pendentes
+                </div>
               </div>
-              <input
-                type="month"
-                value={mesOrcamentos}
-                onChange={(e) => setMesOrcamentos(e.target.value)}
-                className="w-full p-2 text-sm border border-gray-300 rounded-md"
-              />
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-orange-700 font-medium">Filtrar:</span>
+                <input
+                  type="month"
+                  value={mesOrcamentos}
+                  onChange={(e) => setMesOrcamentos(e.target.value)}
+                  className="flex-1 p-2 text-sm border border-orange-300 rounded-md bg-white"
+                />
+              </div>
             </div>
           </div>
-
           {/* Tendência dos últimos 6 meses */}
           {ultimosMeses.length > 0 && (
-            <div className="bg-white p-4 rounded-lg shadow mb-4">
-              <h3 className="font-bold text-lg mb-4">📈 Evolução das Vendas (6 meses)</h3>
-              <div className="space-y-2">
+            <div className="bg-white p-4 rounded-lg shadow-lg mb-4 border border-gray-200">
+              <h3 className="font-bold text-lg mb-4 text-gray-800 flex items-center gap-2">
+                📈 Evolução das Vendas (6 meses)
+              </h3>
+              <div className="space-y-3">
                 {ultimosMeses.map((item, index) => {
-                  const maxValue = Math.max(...ultimosMeses.map(m => parseFloat(m.valor) || 0));
-                  const itemValue = parseFloat(item.valor) || 0;
+                  const maxValue = Math.max(...ultimosMeses.map(m => Number(m.valor) || 0));
+                  const itemValue = Number(item.valor) || 0;
                   const percentage = maxValue > 0 ? (itemValue / maxValue) * 100 : 0;
                   return (
                     <div key={`mes-${index}`} className="flex items-center gap-3">
-                      <div className="text-sm font-medium w-16">{item.mes || ''}</div>
-                      <div className="flex-1 bg-gray-200 rounded-full h-4 relative">
+                      <div className="text-sm font-medium w-20 text-gray-700">{item.mes || ''}</div>
+                      <div className="flex-1 bg-gray-200 rounded-full h-5 relative overflow-hidden">
                         <div 
-                          className="bg-gradient-to-r from-pink-400 to-pink-600 h-4 rounded-full transition-all duration-300"
+                          className="bg-gradient-to-r from-pink-400 to-pink-600 h-5 rounded-full transition-all duration-500 ease-out"
                           style={{ width: `${Math.max(percentage, 0)}%` }}
                         ></div>
                       </div>
-                      <div className="text-sm font-bold text-gray-700 w-20 text-right">
+                      <div className="text-sm font-bold text-gray-800 w-24 text-right">
                         {formatCurrency(itemValue)}
                       </div>
                     </div>
@@ -1436,10 +1965,12 @@ const App = () => {
               </div>
             </div>
           )}
-
-          <div className="bg-white p-4 rounded-lg shadow mb-4">
-            <h3 className="font-bold text-lg mb-4">🏆 Top 5 Produtos do Período</h3>
-            <div className="text-sm text-gray-600 mb-3">
+          {/* Top 5 Produtos */}
+          <div className="bg-white p-4 rounded-lg shadow-lg mb-4 border border-gray-200">
+            <h3 className="font-bold text-lg mb-4 text-gray-800 flex items-center gap-2">
+              🏆 Top 5 Produtos do Período
+            </h3>
+            <div className="text-sm text-gray-600 mb-4 bg-gray-50 p-2 rounded">
               Baseado em vendas de {(() => {
                 try {
                   return new Date(mesVendas + '-01').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
@@ -1449,65 +1980,82 @@ const App = () => {
               })()}
             </div>
             {topProdutos.length === 0 ? (
-              <div className="text-center text-gray-500">Nenhuma venda registrada no período</div>
+              <div className="text-center text-gray-500 py-8">
+                <div className="text-4xl mb-2">📦</div>
+                Nenhuma venda registrada no período
+              </div>
             ) : (
               topProdutos.map(([produto, quantidade], index) => (
-                <div key={`produto-${index}`} className="flex justify-between items-center mb-2 p-2 bg-gray-50 rounded">
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg font-bold text-purple-600">#{index + 1}</span>
-                    <span className="text-sm">{produto}</span>
+                <div key={`produto-${index}`} className="flex justify-between items-center mb-3 p-3 bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg border border-gray-200">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xl font-bold text-purple-600 bg-purple-100 w-8 h-8 rounded-full flex items-center justify-center">
+                      {index + 1}
+                    </span>
+                    <span className="text-sm font-medium text-gray-800">{produto}</span>
                   </div>
-                  <span className="font-bold text-green-600">{quantidade}x</span>
+                  <span className="font-bold text-green-600 bg-green-100 px-3 py-1 rounded-full text-sm">
+                    {quantidade}x
+                  </span>
                 </div>
               ))
             )}
           </div>
-          
           {/* Métricas Avançadas */}
-          <div className="bg-white p-4 rounded-lg shadow mb-4">
-            <h3 className="font-bold text-lg mb-4">📊 Análise do Período</h3>
-            <div className="grid grid-cols-2 gap-4 text-center text-sm">
-              <div className="bg-blue-50 p-3 rounded">
-                <div className="font-bold text-blue-600">
-                  {vendasDoMes.length > 0 ? formatCurrency(totalVendas / vendasDoMes.length) : formatCurrency(0)}
+          <div className="bg-white p-4 rounded-lg shadow-lg mb-4 border border-gray-200">
+            <h3 className="font-bold text-lg mb-4 text-gray-800 flex items-center gap-2">
+              📊 Análise do Período
+            </h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-lg border border-blue-200">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-blue-700">
+                    {vendasDoMes.length > 0 ? formatCurrency(totalVendas / vendasDoMes.length) : formatCurrency(0)}
+                  </div>
+                  <div className="text-sm font-medium text-blue-800">Ticket Médio</div>
                 </div>
-                <div className="text-blue-700">Ticket Médio</div>
               </div>
-              <div className="bg-green-50 p-3 rounded">
-                <div className="font-bold text-green-600">
-                  {vendasDoMes.reduce((sum, p) => {
-                    try {
-                      if (p.itens && Array.isArray(p.itens)) {
-                        return sum + p.itens.reduce((s, i) => s + (parseInt(i.quantidade) || 0), 0);
+              <div className="bg-gradient-to-br from-green-50 to-green-100 p-4 rounded-lg border border-green-200">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-green-700">
+                    {vendasDoMes.reduce((sum, p) => {
+                      try {
+                        if (p.itens && Array.isArray(p.itens)) {
+                          return sum + p.itens.reduce((s, i) => s + (parseInt(i.quantidade) || 0), 0);
+                        }
+                        return sum;
+                      } catch {
+                        return sum;
                       }
-                      return sum;
-                    } catch {
-                      return sum;
-                    }
-                  }, 0)}
+                    }, 0)}
+                  </div>
+                  <div className="text-sm font-medium text-green-800">Itens Vendidos</div>
                 </div>
-                <div className="text-green-700">Itens Vendidos</div>
               </div>
-              <div className="bg-purple-50 p-3 rounded">
-                <div className="font-bold text-purple-600">
-                  {orcamentosDoMes.length > 0 ? ((pedidosDoMes.length / orcamentosDoMes.length) * 100).toFixed(1) : 0}%
+              <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-lg border border-purple-200">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-purple-700">
+                    {orcamentosDoMes.length > 0 ? ((pedidosDoMes.length / orcamentosDoMes.length) * 100).toFixed(1) : 0}%
+                  </div>
+                  <div className="text-sm font-medium text-purple-800">Taxa Conversão</div>
                 </div>
-                <div className="text-purple-700">Taxa Conversão</div>
               </div>
-              <div className="bg-orange-50 p-3 rounded">
-                <div className="font-bold text-orange-600">
-                  {entregasDoMes.length}
+              <div className="bg-gradient-to-br from-orange-50 to-orange-100 p-4 rounded-lg border border-orange-200">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-orange-700">
+                    {entregasDoMes.length}
+                  </div>
+                  <div className="text-sm font-medium text-orange-800">Entregas Mês</div>
                 </div>
-                <div className="text-orange-700">Entregas Mês</div>
               </div>
             </div>
           </div>
-
           {/* Entregas do período selecionado */}
           {entregasDoMes.length > 0 && (
-            <div className="bg-white p-4 rounded-lg shadow mb-4">
-              <h3 className="font-bold text-lg mb-4">📅 Entregas do Período</h3>
-              <div className="text-sm text-gray-600 mb-3">
+            <div className="bg-white p-4 rounded-lg shadow-lg mb-4 border border-gray-200">
+              <h3 className="font-bold text-lg mb-4 text-gray-800 flex items-center gap-2">
+                📅 Entregas do Período
+              </h3>
+              <div className="text-sm text-gray-600 mb-4 bg-gray-50 p-2 rounded">
                 {(() => {
                   try {
                     return new Date(mesEntregas + '-01').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
@@ -1516,34 +2064,36 @@ const App = () => {
                   }
                 })()}
               </div>
-              <div className="max-h-40 overflow-y-auto space-y-2">
+              <div className="max-h-48 overflow-y-auto space-y-3">
                 {entregasDoMes.slice(0, 10).map((pedido, idx) => (
-                  <div key={`entrega-${idx}`} className="border-l-4 border-blue-500 pl-3 bg-blue-50 p-2 rounded">
-                    <div className="font-medium">{pedido.cliente || 'Cliente não informado'}</div>
-                    <div className="text-sm text-gray-600 flex justify-between">
+                  <div key={`entrega-${idx}`} className="border-l-4 border-blue-500 pl-4 bg-gradient-to-r from-blue-50 to-blue-100 p-3 rounded-lg">
+                    <div className="font-medium text-gray-800">{pedido.cliente || 'Cliente não informado'}</div>
+                    <div className="text-sm text-gray-600 flex justify-between items-center mt-1">
                       <span>Entrega: {formatDate(pedido.dataEntrega)}</span>
-                      <span className="font-bold">{formatCurrency(pedido.total)}</span>
+                      <span className="font-bold text-blue-700 bg-blue-200 px-2 py-1 rounded-full text-xs">
+                        {formatCurrency(pedido.total)}
+                      </span>
                     </div>
                     {pedido.temaFesta && (
-                      <div className="text-sm text-purple-600">🎉 {pedido.temaFesta}</div>
+                      <div className="text-sm text-purple-600 font-medium mt-1">🎉 {pedido.temaFesta}</div>
                     )}
                   </div>
                 ))}
                 {entregasDoMes.length > 10 && (
-                  <div className="text-center text-gray-500 text-sm">
+                  <div className="text-center text-gray-500 text-sm bg-gray-50 p-3 rounded-lg">
                     ... e mais {entregasDoMes.length - 10} entregas
                   </div>
                 )}
               </div>
             </div>
           )}
-
-          <div className="bg-gradient-to-r from-yellow-100 to-yellow-200 border border-yellow-400 text-yellow-800 px-4 py-3 rounded text-center">
+          {/* Dica */}
+          <div className="bg-gradient-to-r from-yellow-100 to-yellow-200 border border-yellow-400 text-yellow-800 px-4 py-3 rounded-lg text-center shadow-sm">
             💡 <strong>Dica:</strong> Use os filtros de mês para analisar diferentes períodos e identificar tendências sazonais!
           </div>
           <button
             onClick={() => setCurrentScreen('home')}
-            className="fixed bottom-4 left-4 bg-gray-500 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg"
+            className="fixed bottom-4 left-4 bg-gray-600 hover:bg-gray-700 text-white p-3 rounded-full shadow-lg transition-colors"
           >
             <ChevronLeft size={24} />
           </button>
