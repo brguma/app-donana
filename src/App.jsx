@@ -1773,6 +1773,15 @@ const App = () => {
         return sum;
       }
     }, 0);
+    const totalSinalEntregasDoMes = entregasDoMes.reduce((sum, pedido) => {
+      try {
+        return sum + (parseFloat(pedido.sinal) || 0);
+      } catch {
+        return sum;
+      }
+    }, 0);
+    const totalRestanteEntregasDoMes = totalEntregasDoMes - totalSinalEntregasDoMes;
+
     const pedidosDoMes = filtrarPorMes(pedidosSeguro, mesPedidos, 'data');
     const totalPedidosDoMes = pedidosDoMes.reduce((sum, pedido) => {
       try {
@@ -1781,6 +1790,14 @@ const App = () => {
         return sum;
       }
     }, 0);
+    const totalSinalPedidosDoMes = pedidosDoMes.reduce((sum, pedido) => {
+      try {
+        return sum + (parseFloat(pedido.sinal) || 0);
+      } catch {
+        return sum;
+      }
+    }, 0);
+    const totalRestantePedidosDoMes = totalPedidosDoMes - totalSinalPedidosDoMes;
     const orcamentosDoMes = filtrarPorMes(orcamentosSeguro, mesOrcamentos, 'data');
     const totalOrcamentosDoMes = orcamentosDoMes.reduce((sum, orcamento) => {
       try {
@@ -1886,6 +1903,16 @@ const App = () => {
                 <div className="text-xs text-blue-700 bg-blue-100 px-2 py-1 rounded-full inline-block mt-1">
                   {entregasDoMes.length} pedidos
                 </div>
+                {totalSinalEntregasDoMes > 0 && (
+                  <div className="mt-2 space-y-1">
+                    <div className="text-sm font-medium text-green-700 bg-green-100 px-2 py-1 rounded">
+                      Sinal: {formatCurrency(totalSinalEntregasDoMes)}
+                    </div>
+                    <div className="text-sm font-medium text-orange-700 bg-orange-100 px-2 py-1 rounded">
+                      Restam: {formatCurrency(totalRestanteEntregasDoMes)}
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-blue-700 font-medium">Filtrar:</span>
@@ -1905,6 +1932,16 @@ const App = () => {
                 <div className="text-xs text-purple-700 bg-purple-100 px-2 py-1 rounded-full inline-block mt-1">
                   {pedidosDoMes.length} pedidos
                 </div>
+                {totalSinalPedidosDoMes > 0 && (
+                  <div className="mt-2 space-y-1">
+                    <div className="text-sm font-medium text-green-700 bg-green-100 px-2 py-1 rounded">
+                      Sinal: {formatCurrency(totalSinalPedidosDoMes)}
+                    </div>
+                    <div className="text-sm font-medium text-orange-700 bg-orange-100 px-2 py-1 rounded">
+                      Restam: {formatCurrency(totalRestantePedidosDoMes)}
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-purple-700 font-medium">Filtrar:</span>
