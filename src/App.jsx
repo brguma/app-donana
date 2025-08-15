@@ -266,7 +266,7 @@ const App = () => {
   useEffect(() => {
     console.log('👁️ Monitorando mudanças de autenticação...');
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      console.log('🔐 Status de autenticação mudou:', user ? `Logado: ${user.email}` : 'Deslogado');
+      console.log('🔄 Status de autenticação mudou:', user ? `Logado: ${user.email}` : 'Deslogado');
       setUser(user);
       setLoading(false);
       
@@ -442,7 +442,7 @@ const App = () => {
       await processPendingActions();
       
       // Depois, recarregar dados do Firebase
-      console.log('📥 Recarregando dados do Firebase...');
+      console.log('🔥 Recarregando dados do Firebase...');
       await loadUserData(user.uid);
       
       setSyncMessage('✅ Sincronização concluída com sucesso!');
@@ -609,7 +609,7 @@ const App = () => {
       createdAt: agora
     };
     
-    console.log('📝 Tentando salvar orçamento:', novoOrcamento);
+    console.log('🔍 Tentando salvar orçamento:', novoOrcamento);
     
     try {
       setAuthLoading(true);
@@ -1198,6 +1198,7 @@ const App = () => {
               { name: 'ORÇAMENTO', screen: 'orcamento' },
               { name: 'PENDENTES', screen: 'pendentes', badge: orcamentos.length },
               { name: 'PEDIDOS', screen: 'pedidos', badge: pedidos.length },
+              { name: 'AGENDA', screen: 'agenda' },
               { name: 'FINALIZADOS', screen: 'finalizados', badge: finalizados.length },
               { name: 'RELATÓRIOS', screen: 'relatorios' },
               { name: 'PRODUTOS', screen: 'produtos' }
@@ -1375,7 +1376,7 @@ const App = () => {
                         onClick={() => setEditingCliente(orcamento.id)}
                       >
                         {orcamento.cliente || (
-                          <span className="text-gray-400 italic">📝 Clique para adicionar nome</span>
+                          <span className="text-gray-400 italic">🖊️ Clique para adicionar nome</span>
                         )}
                         <Edit3 size={14} className="text-gray-400" />
                       </div>
@@ -1516,7 +1517,7 @@ const App = () => {
                         onClick={() => setEditingCliente(pedido.id)}
                       >
                         {pedido.cliente || (
-                          <span className="text-gray-400 italic">📝 Clique para adicionar nome</span>
+                          <span className="text-gray-400 italic">🖊️ Clique para adicionar nome</span>
                         )}
                         <Edit3 size={14} className="text-gray-400" />
                       </div>
@@ -1664,6 +1665,209 @@ const App = () => {
               </div>
             ))
           )}
+          <button
+            onClick={() => setCurrentScreen('home')}
+            className="fixed bottom-4 left-4 bg-gray-500 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg"
+          >
+            <ChevronLeft size={24} />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Tela Agenda
+  if (currentScreen === 'agenda') {
+    // Agrupar pedidos por data de entrega
+    const pedidosPorData = {};
+    const pedidosSeguro = Array.isArray(pedidos) ? pedidos : [];
+    
+    pedidosSeguro.forEach(pedido => {
+      try {
+        const dataEntrega = new Date(pedido.dataEntrega);
+        const dataStr = dataEntrega.toISOString().split('T')[0]; // YYYY-MM-DD
+        const dataFormatada = dataEntrega.toLocaleDateString('pt-BR'); // DD/MM/YYYY
+        
+        if (!pedidosPorData[dataStr]) {
+          pedidosPorData[dataStr] = {
+            dataFormatada,
+            pedidos: [],
+            totaisPorProduto: {}
+          };
+        }
+        
+        pedidosPorData[dataStr].pedidos.push(pedido);
+        
+        // Calcular totais por produto para esta data
+        if (pedido.itens && Array.isArray(pedido.itens)) {
+          pedido.itens.forEach(item => {
+            const nomeProduto = item.produto?.nome || 'Produto';
+            const quantidade = parseInt(item.quantidade) || 0;
+            
+            if (!pedidosPorData[dataStr].totaisPorProduto[nomeProduto]) {
+              pedidosPorData[dataStr].totaisPorProduto[nomeProduto] = 0;
+            }
+            pedidosPorData[dataStr].totaisPorProduto[nomeProduto] += quantidade;
+          });
+        }
+      } catch (error) {
+        console.error('Erro ao processar pedido:', error);
+      }
+    });
+    
+    // Ordenar datas
+    const datasOrdenadas = Object.keys(pedidosPorData).sort();
+    
+    // Gerar próximos 30 dias para mostrar datas vazias
+    const proximosDias = [];
+    const hoje = new Date();
+    for (let i = 0; i < 30; i++) {
+      const data = new Date(hoje);
+      data.setDate(hoje.getDate() + i);
+      const dataStr = data.toISOString().split('T')[0];
+      const dataFormatada = data.toLocaleDateString('pt-BR');
+      
+      if (!pedidosPorData[dataStr]) {
+        proximosDias.push({
+          dataStr,
+          dataFormatada,
+          pedidos: [],
+          totaisPorProduto: {}
+        });
+      }
+    }
+    
+    // Combinar datas com pedidos e datas vazias, ordenar
+    const todasAsDatas = [
+      ...datasOrdenadas.map(dataStr => ({
+        dataStr,
+        ...pedidosPorData[dataStr]
+      })),
+      ...proximosDias
+    ].sort((a, b) => a.dataStr.localeCompare(b.dataStr));
+    
+    return (
+      <div className="min-h-screen bg-pink-50 p-4">
+        <div className="max-w-md mx-auto">
+          <h2 className="text-2xl font-bold text-pink-800 mb-6">📅 Agenda de Entregas</h2>
+          
+          {/* Resumo */}
+          <div className="bg-white p-4 rounded-lg shadow mb-4">
+            <h3 className="font-bold text-lg mb-2 text-center">📊 Resumo</h3>
+            <div className="grid grid-cols-2 gap-4 text-center">
+              <div>
+                <div className="text-2xl font-bold text-blue-600">{pedidosSeguro.length}</div>
+                <div className="text-sm text-gray-600">Total Pedidos</div>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-green-600">
+                  {datasOrdenadas.length}
+                </div>
+                <div className="text-sm text-gray-600">Dias com Entregas</div>
+              </div>
+            </div>
+          </div>
+          
+          {/* Lista de datas */}
+          <div className="space-y-4">
+            {todasAsDatas.slice(0, 15).map((diaData, index) => {
+              const temPedidos = diaData.pedidos.length > 0;
+              const isHoje = diaData.dataStr === new Date().toISOString().split('T')[0];
+              
+              return (
+                <div 
+                  key={`dia-${index}`} 
+                  className={`bg-white rounded-lg shadow border-l-4 ${
+                    isHoje ? 'border-yellow-500 bg-yellow-50' : 
+                    temPedidos ? 'border-green-500' : 'border-gray-300'
+                  }`}
+                >
+                  <div className="p-4">
+                    <div className="flex justify-between items-center mb-3">
+                      <h3 className={`text-lg font-bold ${
+                        isHoje ? 'text-yellow-700' : 
+                        temPedidos ? 'text-green-700' : 'text-gray-500'
+                      }`}>
+                        {diaData.dataFormatada}
+                        {isHoje && ' (HOJE)'}
+                      </h3>
+                      <span className={`text-sm font-medium px-2 py-1 rounded-full ${
+                        temPedidos ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                      }`}>
+                        {diaData.pedidos.length} pedido{diaData.pedidos.length !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    
+                    {!temPedidos ? (
+                      <div className="text-center py-4 text-gray-500 italic">
+                        📭 Nenhuma entrega agendada
+                      </div>
+                    ) : (
+                      <>
+                        {/* Lista de pedidos */}
+                        <div className="space-y-3 mb-4">
+                          {diaData.pedidos.map((pedido, pedidoIndex) => (
+                            <div key={`pedido-${pedidoIndex}`} className="bg-gray-50 p-3 rounded-lg">
+                              <div className="font-medium text-gray-800 mb-2">
+                                Pedido {pedidoIndex + 1}
+                                {pedido.cliente && (
+                                  <span className="text-sm text-gray-600 ml-2">- {pedido.cliente}</span>
+                                )}
+                                {pedido.temaFesta && (
+                                  <span className="text-xs text-purple-600 block">🎉 {pedido.temaFesta}</span>
+                                )}
+                              </div>
+                              <div className="space-y-1">
+                                {pedido.itens && Array.isArray(pedido.itens) && pedido.itens.map((item, itemIndex) => (
+                                  <div key={`item-${itemIndex}`} className="text-sm text-gray-700 flex justify-between">
+                                    <span>{item.quantidade}x {item.produto?.nome}</span>
+                                    <span className="font-medium">{formatCurrency(item.total || 0)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="text-right mt-2 pt-2 border-t border-gray-200">
+                                <span className="font-bold text-green-600">
+                                  Total: {formatCurrency(pedido.total || 0)}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        
+                        {/* Totais consolidados por produto */}
+                        <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
+                          <h4 className="font-bold text-blue-800 mb-2">📦 Total do Dia</h4>
+                          <div className="space-y-1">
+                            {Object.entries(diaData.totaisPorProduto)
+                              .sort(([,a], [,b]) => b - a)
+                              .map(([produto, quantidade]) => (
+                                <div key={produto} className="flex justify-between text-sm">
+                                  <span className="text-blue-700">{produto}</span>
+                                  <span className="font-bold text-blue-800">{quantidade}x</span>
+                                </div>
+                              ))}
+                          </div>
+                          <div className="mt-2 pt-2 border-t border-blue-300 text-center">
+                            <span className="font-bold text-blue-800">
+                              Total Geral: {formatCurrency(
+                                diaData.pedidos.reduce((sum, p) => sum + (parseFloat(p.total) || 0), 0)
+                              )}
+                            </span>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          
+          {/* Dica */}
+          <div className="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded-lg mt-6 text-center">
+            💡 <strong>Dica:</strong> A agenda mostra os próximos 15 dias com entregas agendadas e totais consolidados por produto.
+          </div>
+          
           <button
             onClick={() => setCurrentScreen('home')}
             className="fixed bottom-4 left-4 bg-gray-500 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg"
