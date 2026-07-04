@@ -3,33 +3,27 @@ import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
 import './index.css'
 
-// Register Service Worker for PWA
+// O registro do Service Worker agora e feito automaticamente pelo
+// vite-plugin-pwa (configurado em vite.config.js com registerType 'autoUpdate').
+// NAO registramos /sw.js manualmente aqui para evitar dois service workers em conflito.
+//
+// O bloco abaixo executa uma LIMPEZA UNICA: remove qualquer Service Worker antigo
+// (o /sw.js manual que existia antes) e apaga caches antigos, para que os
+// dispositivos que ja instalaram a versao antiga do PWA sejam corrigidos.
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js')
-      .then((registration) => {
-        // Check for updates
-        registration.addEventListener('updatefound', () => {
-          const newWorker = registration.installing;
-          if (newWorker) {
-            newWorker.addEventListener('statechange', () => {
-              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                // Nova versão disponível
-                if (confirm('🆕 Nova versão disponível! Atualizar agora?')) {
-                  window.location.reload();
-                }
-              }
-            });
-          }
-        });
-      })
-      .catch((error) => {
-        console.warn('Falha ao registrar Service Worker:', error);
-      });
-  });
+  navigator.serviceWorker.getRegistrations().then((registrations) => {
+    registrations.forEach((registration) => {
+      const swUrl = registration.active && registration.active.scriptURL ? registration.active.scriptURL : '';
+      // Remove apenas o service worker manual antigo (/sw.js).
+      // O SW gerado pelo vite-plugin-pwa tem outro nome e sera mantido.
+      if (swUrl.indexOf('/sw.js') !== -1) {
+        registration.unregister();
+      }
+    });
+  }).catch(() => {});
 }
 
-// Handle offline/online status
+// Indicador de status online/offline
 window.addEventListener('online', () => {
   document.body.classList.remove('offline');
   document.body.classList.add('online');
